@@ -49,7 +49,6 @@ func (s *Server) Run() error {
 		}
 
 		if msg.Method != "" {
-			// It's a request or notification
 			if err := s.handleMessage(msg); err != nil {
 				log.Printf("Error handling message: %v", err)
 			}
@@ -147,7 +146,6 @@ func (s *Server) handleDidOpen(msg *jsonrpc.Message) error {
 		return err
 	}
 
-	// Send diagnostics
 	return s.publishDiagnostics(params.TextDocument.URI)
 }
 
@@ -157,12 +155,9 @@ func (s *Server) handleDidChange(msg *jsonrpc.Message) error {
 	if err := json.Unmarshal(msg.Params, &params); err != nil {
 		return err
 	}
-
 	if err := s.docMgr.Update(params.TextDocument.URI, params.ContentChanges, params.TextDocument.Version); err != nil {
 		return err
 	}
-
-	// Send diagnostics
 	return s.publishDiagnostics(params.TextDocument.URI)
 }
 
@@ -172,7 +167,6 @@ func (s *Server) handleDidClose(msg *jsonrpc.Message) error {
 	if err := json.Unmarshal(msg.Params, &params); err != nil {
 		return err
 	}
-
 	s.docMgr.Close(params.TextDocument.URI)
 	return nil
 }
@@ -183,8 +177,6 @@ func (s *Server) handleDidSave(msg *jsonrpc.Message) error {
 	if err := json.Unmarshal(msg.Params, &params); err != nil {
 		return err
 	}
-
-	// Re-publish diagnostics on save
 	return s.publishDiagnostics(params.TextDocument.URI)
 }
 
@@ -207,7 +199,6 @@ func (s *Server) handleHover(msg *jsonrpc.Message) error {
 			return s.writer.WriteResponse(msg.ID, nil)
 		}
 
-		// Provide basic hover info for keywords
 		if info := s.getKeywordInfo(word); info != "" {
 			hover := protocol.Hover{
 				Contents: protocol.MarkupContent{
@@ -221,7 +212,6 @@ func (s *Server) handleHover(msg *jsonrpc.Message) error {
 		return s.writer.WriteResponse(msg.ID, nil)
 	}
 
-	// Build hover information
 	var content strings.Builder
 	content.WriteString("```haxe\n")
 
@@ -316,13 +306,11 @@ func (s *Server) handleSignatureHelp(msg *jsonrpc.Message) error {
 		return s.writer.WriteResponse(msg.ID, nil)
 	}
 
-	// Find the function call context
 	line := doc.GetLineContent(params.Position.Line)
 	if params.Position.Character > len(line) {
 		return s.writer.WriteResponse(msg.ID, nil)
 	}
 
-	// Find the opening parenthesis
 	funcName := ""
 	parenCount := 0
 	paramIndex := 0
@@ -333,7 +321,6 @@ func (s *Server) handleSignatureHelp(msg *jsonrpc.Message) error {
 			parenCount++
 		} else if ch == '(' {
 			if parenCount == 0 {
-				// Found the opening paren, extract function name
 				j := i - 1
 				for j >= 0 && (parser.IsIdentifierChar(rune(line[j])) || line[j] == '.') {
 					j--
@@ -351,14 +338,12 @@ func (s *Server) handleSignatureHelp(msg *jsonrpc.Message) error {
 		return s.writer.WriteResponse(msg.ID, nil)
 	}
 
-	// Find the function symbol
 	var funcSymbol *parser.Symbol
 	for _, sym := range doc.Symbols {
 		if sym.Name == funcName && sym.Kind == protocol.SymbolKindFunction {
 			funcSymbol = sym
 			break
 		}
-		// Check children
 		for _, child := range sym.Children {
 			if child.Name == funcName && child.Kind == protocol.SymbolKindFunction {
 				funcSymbol = child
@@ -371,7 +356,6 @@ func (s *Server) handleSignatureHelp(msg *jsonrpc.Message) error {
 		return s.writer.WriteResponse(msg.ID, nil)
 	}
 
-	// Build signature
 	var label strings.Builder
 	label.WriteString(funcSymbol.Name)
 	label.WriteString("(")
@@ -500,7 +484,6 @@ func (s *Server) handleWorkspaceSymbol(msg *jsonrpc.Message) error {
 					},
 				})
 			}
-			// Check children
 			for _, child := range sym.Children {
 				if params.Query == "" || strings.Contains(strings.ToLower(child.Name), strings.ToLower(params.Query)) {
 					results = append(results, protocol.SymbolInformation{
@@ -537,10 +520,7 @@ func (s *Server) handleRename(msg *jsonrpc.Message) error {
 		return s.writer.WriteResponse(msg.ID, nil)
 	}
 
-	// Find all references
 	locations := doc.FindReferences(symbol.Name)
-
-	// Build workspace edit
 	changes := make(map[string][]protocol.TextEdit)
 	for _, loc := range locations {
 		edit := protocol.TextEdit{
@@ -564,9 +544,7 @@ func (s *Server) publishDiagnostics(uri string) error {
 		return nil
 	}
 
-	// Basic syntax checking (simplified)
 	diagnostics := s.analyzeDiagnostics(doc)
-
 	params := protocol.PublishDiagnosticsParams{
 		URI:         uri,
 		Diagnostics: diagnostics,
@@ -579,18 +557,14 @@ func (s *Server) publishDiagnostics(uri string) error {
 func (s *Server) analyzeDiagnostics(doc *document.Document) []protocol.Diagnostic {
 	var diagnostics []protocol.Diagnostic
 
-	// Check for basic syntax errors
 	lines := doc.Lines
 	for i, line := range lines {
-		// Check for unmatched braces (simplified)
 		openBraces := strings.Count(line, "{")
 		closeBraces := strings.Count(line, "}")
 		if openBraces != closeBraces {
-			// This is a simplified check; real implementation would be more sophisticated
 			continue
 		}
 
-		// Check for missing semicolons on simple statements
 		trimmed := strings.TrimSpace(line)
 		if len(trimmed) > 0 && !strings.HasSuffix(trimmed, ";") &&
 			!strings.HasSuffix(trimmed, "{") &&
@@ -605,7 +579,6 @@ func (s *Server) analyzeDiagnostics(doc *document.Document) []protocol.Diagnosti
 			!strings.Contains(trimmed, "for ") &&
 			!strings.Contains(trimmed, "while ") {
 
-			// Only warn, not error
 			if strings.Contains(trimmed, "var ") || strings.Contains(trimmed, "return ") {
 				diagnostics = append(diagnostics, protocol.Diagnostic{
 					Range: protocol.Range{
@@ -627,7 +600,6 @@ func (s *Server) analyzeDiagnostics(doc *document.Document) []protocol.Diagnosti
 func (s *Server) getCompletionItems(doc *document.Document, pos protocol.Position) []protocol.CompletionItem {
 	var items []protocol.CompletionItem
 
-	// Add Haxe keywords
 	keywords := []string{
 		"abstract", "break", "case", "cast", "catch", "class", "continue", "default",
 		"do", "dynamic", "else", "enum", "extends", "extern", "false", "final", "for",
@@ -644,8 +616,6 @@ func (s *Server) getCompletionItems(doc *document.Document, pos protocol.Positio
 			Detail: "Haxe keyword",
 		})
 	}
-
-	// Add symbols from the document
 	for _, sym := range doc.Symbols {
 		items = append(items, s.symbolToCompletionItem(sym))
 		for _, child := range sym.Children {
@@ -653,7 +623,6 @@ func (s *Server) getCompletionItems(doc *document.Document, pos protocol.Positio
 		}
 	}
 
-	// Add common types
 	types := []string{"Int", "Float", "String", "Bool", "Array", "Dynamic", "Void"}
 	for _, t := range types {
 		items = append(items, protocol.CompletionItem{
