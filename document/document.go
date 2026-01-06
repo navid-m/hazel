@@ -78,11 +78,18 @@ func (m *Manager) Update(uri string, changes []protocol.TextDocumentContentChang
 	doc.Version = version
 	doc.Lines = strings.Split(doc.Content, "\n")
 
-	p := parser.NewParser(doc.Content)
-	symbols, err := p.Parse()
-	if err == nil {
-		doc.Symbols = symbols
-	}
+	func() {
+		defer func() {
+			if r := recover(); r != nil {
+				// Parser crashed, keep old symbols
+			}
+		}()
+		p := parser.NewParser(doc.Content)
+		symbols, err := p.Parse()
+		if err == nil {
+			doc.Symbols = symbols
+		}
+	}()
 
 	return nil
 }

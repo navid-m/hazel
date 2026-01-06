@@ -143,7 +143,7 @@ func (s *Server) handleInitialize(msg *jsonrpc.Message) error {
 			},
 			"hoverProvider": true,
 			"completionProvider": map[string]any{
-				"triggerCharacters": []string{".", "("},
+				"triggerCharacters": []string{".", "(", "*"},
 			},
 			"signatureHelpProvider": map[string]any{
 				"triggerCharacters": []string{"(", ","},
@@ -346,7 +346,14 @@ func (s *Server) handleHover(msg *jsonrpc.Message) error {
 }
 
 // handleCompletion handles textDocument/completion
-func (s *Server) handleCompletion(msg *jsonrpc.Message) error {
+func (s *Server) handleCompletion(msg *jsonrpc.Message) (err error) {
+	defer func() {
+		if r := recover(); r != nil {
+			log.Printf("[ERROR] Panic in handleCompletion: %v", r)
+			err = fmt.Errorf("panic: %v", r)
+		}
+	}()
+
 	var params protocol.TextDocumentPositionParams
 	if err := json.Unmarshal(msg.Params, &params); err != nil {
 		return err
@@ -359,6 +366,9 @@ func (s *Server) handleCompletion(msg *jsonrpc.Message) error {
 			Items:        []protocol.CompletionItem{},
 		})
 	}
+
+	line := doc.GetLineContent(params.Position.Line)
+	log.Printf("[DEBUG] Completion at line %d, char %d, line content: %q", params.Position.Line, params.Position.Character, line)
 
 	items := s.getCompletionItems(doc, params.Position)
 
@@ -865,7 +875,27 @@ func (s *Server) getCompletionItems(
 	doc *document.Document,
 	pos protocol.Position,
 ) []protocol.CompletionItem {
+	defer func() {
+		if r := recover(); r != nil {
+			log.Printf("[ERROR] Panic in getCompletionItems: %v", r)
+		}
+	}()
+
 	var items []protocol.CompletionItem
+
+	line := doc.GetLineContent(pos.Line)
+	log.Printf("[DEBUG] getCompletionItems: pos.Character=%d, line length=%d", pos.Character, len(line))
+	
+	if pos.Character >= 2 && pos.Character <= len(line) {
+		prefix := line[:pos.Character]
+		log.Printf("[DEBUG] Checking prefix: %q", prefix)
+		if strings.HasSuffix(prefix, "/*") || (strings.HasSuffix(prefix, "*") && strings.Contains(prefix, "/*")) {
+			log.Printf("[DEBUG] Docstring trigger detected!")
+			if docItem := s.getDocstringCompletion(doc, pos); docItem != nil {
+				return []protocol.CompletionItem{*docItem}
+			}
+		}
+	}
 
 	keywords := []string{
 		"abstract", "break", "case", "cast", "catch", "class", "continue", "default",
@@ -918,6 +948,71 @@ func (s *Server) getCompletionItems(
 	}
 
 	return items
+}
+
+// getDocstringCompletion generates docstring completion based on function signature
+func (s *Server) getDocstringCompletion(doc *document.Document, pos protocol.Position) *protocol.CompletionItem {
+	defer func() {
+		if r := recover(); r != nil {
+			log.Printf("[ERROR] Panic in getDocstringCompletion: %v", r)
+		}
+	}()
+
+	nextLine := pos.Line + 1
+	if nextLine >= len(doc.Lines) {
+		return &protocol.CompletionItem{
+			Label:      "/**",
+			Kind:       protocol.CompletionItemKindSnippet,
+			Detail:     "Multiline comment",
+			InsertText: "*\n * \n */",
+		}
+	}
+
+	funcLine := strings.TrimSpace(doc.Lines[nextLine])
+	funcRe := regexp.MustCompile(`function\s+(\w+)\s*\(([^)]*)\)\s*:\s*(\w+)`)
+	matches := funcRe.FindStringSubmatch(funcLine)
+
+	if len(matches) == 0 {
+		return &protocol.CompletionItem{
+			Label:      "/**",
+			Kind:       protocol.CompletionItemKindSnippet,
+			Detail:     "Multiline comment",
+			InsertText: "*\n * \n */",
+		}
+	}
+
+	var doc2 strings.Builder
+	doc2.WriteString("*\n")
+
+	params := strings.TrimSpace(matches[2])
+	if params != "" {
+		paramList := strings.Split(params, ",")
+		for _, param := range paramList {
+			param = strings.TrimSpace(param)
+			if param == "" {
+				continue
+			}
+			parts := strings.Split(param, ":")
+			paramName := strings.TrimSpace(parts[0])
+			doc2.WriteString(" * @param ")
+			doc2.WriteString(paramName)
+			doc2.WriteString(" \n")
+		}
+	}
+
+	returnType := strings.TrimSpace(matches[3])
+	if returnType != "Void" {
+		doc2.WriteString(" * @return \n")
+	}
+
+	doc2.WriteString(" */")
+
+	return &protocol.CompletionItem{
+		Label:      "/**",
+		Kind:       protocol.CompletionItemKindSnippet,
+		Detail:     "Function documentation",
+		InsertText: doc2.String(),
+	}
 }
 
 // symbolToCompletionItem converts a symbol to a completion item
