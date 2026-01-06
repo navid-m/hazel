@@ -540,7 +540,24 @@ func (s *Server) handleDefinition(msg *jsonrpc.Message) error {
 
 	symbol := doc.FindSymbolAtPosition(params.Position)
 	if symbol == nil {
-		return s.writer.WriteResponse(msg.ID, nil)
+		word := doc.GetWordAtPosition(params.Position)
+		if word == "" {
+			return s.writer.WriteResponse(msg.ID, nil)
+		}
+
+		symbol = doc.FindSymbolByName(word)
+		if symbol == nil {
+			symbol = s.findSymbolInProject(word)
+			if symbol == nil {
+				return s.writer.WriteResponse(msg.ID, nil)
+			}
+			
+			location := s.getSymbolLocation(word)
+			if location != nil {
+				return s.writer.WriteResponse(msg.ID, location)
+			}
+			return s.writer.WriteResponse(msg.ID, nil)
+		}
 	}
 
 	location := protocol.Location{
@@ -549,6 +566,68 @@ func (s *Server) handleDefinition(msg *jsonrpc.Message) error {
 	}
 
 	return s.writer.WriteResponse(msg.ID, location)
+}
+
+func (s *Server) getSymbolLocation(name string) *protocol.Location {
+	if s.limeProject == nil {
+		return nil
+	}
+
+	parts := strings.Split(name, ".")
+	
+	for _, libName := range s.limeProject.Haxelibs {
+		libPath := lime.GetHaxelibPath(libName)
+		if libPath == "" {
+			continue
+		}
+
+		if len(parts) >= 2 {
+			relPath := strings.Join(parts, string(filepath.Separator)) + ".hx"
+			fullPath := filepath.Join(libPath, relPath)
+			if _, err := os.Stat(fullPath); err == nil {
+				return &protocol.Location{
+					URI: "file://" + fullPath,
+					Range: protocol.Range{
+						Start: protocol.Position{Line: 0, Character: 0},
+						End:   protocol.Position{Line: 0, Character: 0},
+					},
+				}
+			}
+		} else {
+			var foundPath string
+			filepath.Walk(libPath, func(p string, info os.FileInfo, err error) error {
+				if err != nil || info.IsDir() || !strings.HasSuffix(p, ".hx") {
+					return nil
+				}
+				content, err := os.ReadFile(p)
+				if err != nil {
+					return nil
+				}
+				parser := parser.NewParser(string(content))
+				syms, err := parser.Parse()
+				if err == nil {
+					for _, sym := range syms {
+						if sym.Name == name {
+							foundPath = p
+							return filepath.SkipAll
+						}
+					}
+				}
+				return nil
+			})
+			if foundPath != "" {
+				return &protocol.Location{
+					URI: "file://" + foundPath,
+					Range: protocol.Range{
+						Start: protocol.Position{Line: 0, Character: 0},
+						End:   protocol.Position{Line: 0, Character: 0},
+					},
+				}
+			}
+		}
+	}
+
+	return nil
 }
 
 // handleReferences handles textDocument/references
