@@ -1,0 +1,16 @@
+.dub
+docs.json
+__dummy.html
+docs/
+/hazel
+hazel.so
+hazel.dylib
+hazel.dll
+hazel.a
+hazel.lib
+hazel-test-*
+*.exe
+*.pdb
+*.o
+*.obj
+*.lst
