@@ -329,6 +329,8 @@ func (p *Parser) parseTypeDeclaration(startIdx int, kind string) *Symbol {
 		return nil
 	}
 
+	documentation := p.findPrecedingComment(startIdx)
+
 	symbolKind := protocol.SymbolKindClass
 	switch kind {
 	case "interface":
@@ -384,8 +386,9 @@ func (p *Parser) parseTypeDeclaration(startIdx int, kind string) *Symbol {
 			Start: protocol.Position{Line: nameToken.Line, Character: nameToken.Col},
 			End:   protocol.Position{Line: nameToken.Line, Character: nameToken.Col + len(nameToken.Value)},
 		},
-		Type:     parentType,
-		Children: []*Symbol{},
+		Type:          parentType,
+		Children:      []*Symbol{},
+		Documentation: documentation,
 	}
 }
 
@@ -479,16 +482,13 @@ func (p *Parser) parseVariable(startIdx int) *Symbol {
 
 	varType := "Dynamic"
 
-	// Look for preceding comment/docstring
 	documentation := p.findPrecedingComment(startIdx)
 
-	// Look for explicit type annotation (var name:Type)
 	if startIdx+2 < len(p.tokens) && p.tokens[startIdx+2].Value == ":" {
 		if startIdx+3 < len(p.tokens) && p.tokens[startIdx+3].Type == TokenIdentifier {
 			varType = p.tokens[startIdx+3].Value
 		}
 	} else {
-		// Look for type inference from 'new' expression (var name = new Type())
 		for i := startIdx + 2; i < len(p.tokens) && i < startIdx+10; i++ {
 			if p.tokens[i].Value == "=" && i+1 < len(p.tokens) &&
 				p.tokens[i+1].Value == "new" && i+2 < len(p.tokens) &&
