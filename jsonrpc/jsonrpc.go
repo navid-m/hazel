@@ -147,7 +147,7 @@ func (w *Writer) WriteMessage(msg *Message) error {
 }
 
 // Writes a response message
-func (w *Writer) WriteResponse(id json.RawMessage, result interface{}) error {
+func (w *Writer) WriteResponse(id json.RawMessage, result any) error {
 	resultJSON, err := json.Marshal(result)
 	if err != nil {
 		return err
@@ -171,7 +171,7 @@ func (w *Writer) WriteError(id json.RawMessage, code int, message string) error 
 }
 
 // WriteNotification writes a notification message
-func (w *Writer) WriteNotification(method string, params interface{}) error {
+func (w *Writer) WriteNotification(method string, params any) error {
 	paramsJSON, err := json.Marshal(params)
 	if err != nil {
 		return err
