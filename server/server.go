@@ -544,9 +544,12 @@ func (s *Server) handleDefinition(msg *jsonrpc.Message) error {
 	}
 
 	line := doc.GetLineContent(params.Position.Line)
+	log.Printf("[DEBUG] Definition line: %q, pos: %d", line, params.Position.Character)
 	if params.Position.Character > 0 && params.Position.Character <= len(line) {
 		prefix := line[:params.Position.Character]
+		log.Printf("[DEBUG] Definition prefix: %q", prefix)
 		dotIdx := strings.LastIndex(prefix, ".")
+		log.Printf("[DEBUG] Dot index: %d", dotIdx)
 		if dotIdx > 0 {
 			objName := ""
 			for i := dotIdx - 1; i >= 0; i-- {
@@ -562,14 +565,17 @@ func (s *Server) handleDefinition(msg *jsonrpc.Message) error {
 			memberName := doc.GetWordAtPosition(params.Position)
 			if objName != "" && memberName != "" {
 				objType := s.resolveVariableType(doc, objName)
+				log.Printf("[DEBUG] Goto definition: objName=%s, memberName=%s, objType=%s", objName, memberName, objType)
 				if objType != "" {
-					if memberSymbol := s.findMemberInType(doc, objType, memberName); memberSymbol != nil {
-						location := s.getSymbolLocation(objType + "." + memberName)
-						if location != nil {
-							return s.writer.WriteResponse(msg.ID, location)
-						}
+					location := s.getTypeDefinitionLocation(objType, memberName)
+					if location != nil {
+						log.Printf("[DEBUG] Found member location: %s", location.URI)
+						return s.writer.WriteResponse(msg.ID, location)
 					}
+					log.Printf("[DEBUG] Member location not found for %s.%s", objType, memberName)
 				}
+				// If we're in member access context, don't fall through to old logic
+				return s.writer.WriteResponse(msg.ID, nil)
 			}
 		}
 	}
@@ -638,6 +644,59 @@ func (s *Server) getSymbolLocation(name string) *protocol.Location {
 		}
 	}
 
+	return nil
+}
+
+// getTypeDefinitionLocation finds the location of a member within a type definition
+func (s *Server) getTypeDefinitionLocation(typeName string, memberName string) *protocol.Location {
+	if s.limeProject == nil {
+		return nil
+	}
+
+	// Search in project sources and haxelibs
+	searchPaths := append(s.limeProject.Sources, []string{}...)
+	for _, libName := range s.limeProject.Haxelibs {
+		if libPath := lime.GetHaxelibPath(libName); libPath != "" {
+			searchPaths = append(searchPaths, libPath)
+		}
+	}
+
+	for _, basePath := range searchPaths {
+		if location := s.findMemberLocationInPath(typeName, memberName, basePath); location != nil {
+			return location
+		}
+	}
+
+	return nil
+}
+
+// findMemberLocationInPath searches for a member within a type in the given path
+func (s *Server) findMemberLocationInPath(typeName string, memberName string, basePath string) *protocol.Location {
+	// Try direct file path first
+	parts := strings.Split(typeName, ".")
+	if len(parts) >= 1 {
+		relPath := strings.Join(parts, string(filepath.Separator)) + ".hx"
+		fullPath := filepath.Join(basePath, relPath)
+		
+		if content, err := os.ReadFile(fullPath); err == nil {
+			p := parser.NewParser(string(content))
+			if symbols, err := p.Parse(); err == nil {
+				for _, sym := range symbols {
+					if sym.Name == parts[len(parts)-1] {
+						// Found the type, now look for the member
+						for _, child := range sym.Children {
+							if child.Name == memberName {
+								return &protocol.Location{
+									URI:   "file://" + fullPath,
+									Range: child.Selection,
+								}
+							}
+						}
+					}
+				}
+			}
+		}
+	}
 	return nil
 }
 
