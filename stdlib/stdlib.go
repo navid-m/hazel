@@ -160,6 +160,33 @@ func (s *StdLib) FindSymbol(name string) *parser.Symbol {
 	return nil
 }
 
+// FindSymbolLocation finds a symbol and returns its file location
+func (s *StdLib) FindSymbolLocation(name string) (string, *parser.Symbol) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	if symbols, ok := s.symbols[name]; ok && len(symbols) > 0 {
+		filePath := s.getFilePathFromTypeName(name)
+		return filePath, symbols[0]
+	}
+
+	for typeName, symbols := range s.symbols {
+		sym := parser.FindSymbolByName(symbols, name)
+		if sym != nil {
+			filePath := s.getFilePathFromTypeName(typeName)
+			return filePath, sym
+		}
+	}
+
+	return "", nil
+}
+
+// getFilePathFromTypeName converts type name back to file path
+func (s *StdLib) getFilePathFromTypeName(typeName string) string {
+	relPath := strings.ReplaceAll(typeName, ".", string(filepath.Separator)) + ".hx"
+	return filepath.Join(s.path, relPath)
+}
+
 // GetAllSymbols returns all symbols from a specific type
 func (s *StdLib) GetAllSymbols(typeName string) []*parser.Symbol {
 	s.mu.RLock()

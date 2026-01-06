@@ -549,6 +549,13 @@ func (s *Server) handleDefinition(msg *jsonrpc.Message) error {
 		if symbol == nil {
 			symbol = s.findSymbolInProject(word)
 			if symbol == nil {
+				if filePath, stdSymbol := s.stdlib.FindSymbolLocation(word); stdSymbol != nil {
+					location := &protocol.Location{
+						URI:   "file://" + filePath,
+						Range: stdSymbol.Selection,
+					}
+					return s.writer.WriteResponse(msg.ID, location)
+				}
 				return s.writer.WriteResponse(msg.ID, nil)
 			}
 
@@ -595,7 +602,11 @@ func (s *Server) getSymbolLocation(name string) *protocol.Location {
 	return nil
 }
 
-func (s *Server) findSymbolInPath(name string, parts []string, basePath string) *protocol.Location {
+func (s *Server) findSymbolInPath(
+	name string,
+	parts []string,
+	basePath string,
+) *protocol.Location {
 	if len(parts) >= 2 {
 		relPath := strings.Join(parts, string(filepath.Separator)) + ".hx"
 		fullPath := filepath.Join(basePath, relPath)
