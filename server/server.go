@@ -15,6 +15,7 @@ import (
 	"github.com/navid-m/hazel/jsonrpc"
 	"github.com/navid-m/hazel/parser"
 	"github.com/navid-m/hazel/protocol"
+	"github.com/navid-m/hazel/stdlib"
 )
 
 // Server represents the LSP server
@@ -22,16 +23,25 @@ type Server struct {
 	reader   *jsonrpc.Reader
 	writer   *jsonrpc.Writer
 	docMgr   *document.Manager
+	stdlib   *stdlib.StdLib
 	debug    bool
 	shutdown bool
 }
 
 // NewServer creates a new LSP server
 func NewServer(debug bool) *Server {
+	stdLib := stdlib.NewStdLib()
+	go func() {
+		if err := stdLib.Discover(); err != nil {
+			log.Printf("Error indexing stdlib: %v", err)
+		}
+	}()
+
 	return &Server{
 		reader: jsonrpc.NewReader(os.Stdin, debug),
 		writer: jsonrpc.NewWriter(os.Stdout, debug),
 		docMgr: document.NewManager(),
+		stdlib: stdLib,
 		debug:  debug,
 	}
 }
@@ -108,7 +118,7 @@ func (s *Server) handleInitialize(msg *jsonrpc.Message) error {
 		"capabilities": map[string]any{
 			"textDocumentSync": map[string]any{
 				"openClose": true,
-				"change":    2, // Incremental
+				"change":    2,
 				"save": map[string]any{
 					"includeText": true,
 				},
@@ -217,7 +227,10 @@ func (s *Server) handleHover(msg *jsonrpc.Message) error {
 
 		symbol = doc.FindSymbolByName(word)
 		if symbol == nil {
-			return s.writer.WriteResponse(msg.ID, nil)
+			symbol = s.stdlib.FindSymbol(word)
+			if symbol == nil {
+				return s.writer.WriteResponse(msg.ID, nil)
+			}
 		}
 	}
 
@@ -649,6 +662,24 @@ func (s *Server) getCompletionItems(
 			Kind:   protocol.CompletionItemKindClass,
 			Detail: "Built-in type",
 		})
+	}
+
+	stdlibItems := s.stdlib.GetCompletionItems("")
+	for _, name := range stdlibItems {
+		found := false
+		for _, item := range items {
+			if item.Label == name {
+				found = true
+				break
+			}
+		}
+		if !found {
+			items = append(items, protocol.CompletionItem{
+				Label:  name,
+				Kind:   protocol.CompletionItemKindClass,
+				Detail: "Standard library",
+			})
+		}
 	}
 
 	return items
