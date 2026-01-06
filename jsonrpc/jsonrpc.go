@@ -52,9 +52,10 @@ func NewReader(r io.Reader, debug bool) *Reader {
 
 // ReadMessage reads a single JSON-RPC message
 func (r *Reader) ReadMessage() (*Message, error) {
-	// Read headers
-	headers := make(map[string]string)
-	buf := make([]byte, 1)
+	var (
+		headers = make(map[string]string)
+		buf     = make([]byte, 1)
+	)
 
 	for {
 		line := ""
