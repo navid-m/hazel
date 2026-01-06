@@ -829,15 +829,18 @@ func (s *Server) extractClassName(content string) string {
 
 // runHaxeCompiler runs the Haxe compiler and parses its output
 func (s *Server) runHaxeCompiler(uri string) []protocol.Diagnostic {
+	log.Printf("[DEBUG] runHaxeCompiler called for URI: %s", uri)
 	diagnostics := make([]protocol.Diagnostic, 0)
 
 	filePath := strings.TrimPrefix(uri, "file://")
 	if len(filePath) > 0 && filePath[0] != '/' {
 		filePath = "/" + filePath
 	}
+	log.Printf("[DEBUG] File path: %s", filePath)
 
 	doc, exists := s.docMgr.Get(uri)
 	if !exists {
+		log.Printf("[DEBUG] Document not found in manager")
 		return diagnostics
 	}
 
@@ -845,16 +848,20 @@ func (s *Server) runHaxeCompiler(uri string) []protocol.Diagnostic {
 	if originalFilename == "" {
 		originalFilename = "TempFile.hx"
 	}
+	log.Printf("[DEBUG] Original filename: %s", originalFilename)
 
 	tempDir, err := os.MkdirTemp(filepath.Dir(filePath), "haxe_lsp_")
 	if err != nil {
+		log.Printf("[DEBUG] Failed to create temp dir: %v", err)
 		return diagnostics
 	}
 	defer os.RemoveAll(tempDir)
+	log.Printf("[DEBUG] Temp dir: %s", tempDir)
 
 	tempFilePath := filepath.Join(tempDir, originalFilename)
 	tempFile, err := os.Create(tempFilePath)
 	if err != nil {
+		log.Printf("[DEBUG] Failed to create temp file: %v", err)
 		return diagnostics
 	}
 
@@ -862,27 +869,50 @@ func (s *Server) runHaxeCompiler(uri string) []protocol.Diagnostic {
 	if !strings.Contains(content, "package") {
 		content = "package;\n" + content
 	}
+	log.Printf("[DEBUG] File content length: %d", len(content))
 
 	if _, err := tempFile.Write([]byte(content)); err != nil {
 		tempFile.Close()
+		log.Printf("[DEBUG] Failed to write temp file: %v", err)
 		return diagnostics
 	}
 	tempFile.Close()
 
-	args := []string{"--no-output", filepath.Base(tempFilePath)}
+	args := []string{"--no-output"}
 
 	if s.limeProject != nil {
+		log.Printf("[DEBUG] Lime project found with %d sources and %d haxelibs", len(s.limeProject.Sources), len(s.limeProject.Haxelibs))
 		for _, src := range s.limeProject.Sources {
 			args = append(args, "-cp", src)
+			log.Printf("[DEBUG] Added source path: %s", src)
 		}
 		for _, lib := range s.limeProject.Haxelibs {
-			args = append(args, "-lib", lib)
+			libPath := lime.GetHaxelibPath(lib)
+			if libPath != "" {
+				args = append(args, "-cp", libPath)
+				log.Printf("[DEBUG] Added haxelib path: %s -> %s", lib, libPath)
+			} else {
+				log.Printf("[DEBUG] Failed to resolve haxelib: %s", lib)
+			}
 		}
-		log.Printf("[DEBUG] Haxe compiler args: %v", args)
+	} else {
+		log.Printf("[DEBUG] No lime project found")
 	}
+
+	className := s.extractClassName(content)
+	if className != "" {
+		args = append(args, className)
+		log.Printf("[DEBUG] Using class name: %s", className)
+	} else {
+		args = append(args, filepath.Base(tempFilePath))
+		log.Printf("[DEBUG] Using filename: %s", filepath.Base(tempFilePath))
+	}
+
+	log.Printf("[DEBUG] Final Haxe compiler args: %v", args)
 
 	cmd := exec.Command("haxe", args...)
 	cmd.Dir = tempDir
+	log.Printf("[DEBUG] Running haxe in directory: %s", tempDir)
 	output, _ := cmd.CombinedOutput()
 	log.Printf("[DEBUG] Haxe compiler output: %s", string(output))
 
