@@ -587,6 +587,24 @@ func (s *Server) handleDefinition(msg *jsonrpc.Message) error {
 			return s.writer.WriteResponse(msg.ID, nil)
 		}
 
+		if currentClass := s.findCurrentClass(doc, params.Position); currentClass != nil {
+			for _, child := range currentClass.Children {
+				if child.Name == word && child.Kind == protocol.SymbolKindFunction {
+					location := protocol.Location{
+						URI:   params.TextDocument.URI,
+						Range: child.Selection,
+					}
+					return s.writer.WriteResponse(msg.ID, location)
+				}
+			}
+			if currentClass.Type != "" {
+				location := s.getTypeDefinitionLocation(currentClass.Type, word)
+				if location != nil {
+					return s.writer.WriteResponse(msg.ID, location)
+				}
+			}
+		}
+
 		symbol = doc.FindSymbolByName(word)
 		if symbol == nil {
 			symbol = s.findImportedSymbol(doc, word)
@@ -667,6 +685,18 @@ func (s *Server) getTypeDefinitionLocation(typeName string, memberName string) *
 		}
 	}
 
+	return nil
+}
+
+// findCurrentClass finds the class that contains the given position
+func (s *Server) findCurrentClass(doc *document.Document, pos protocol.Position) *parser.Symbol {
+	for _, sym := range doc.Symbols {
+		if sym.Kind == protocol.SymbolKindClass {
+			if pos.Line >= sym.Range.Start.Line && pos.Line <= sym.Range.End.Line {
+				return sym
+			}
+		}
+	}
 	return nil
 }
 

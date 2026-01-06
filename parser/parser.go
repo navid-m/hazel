@@ -337,6 +337,18 @@ func (p *Parser) parseTypeDeclaration(startIdx int, kind string) *Symbol {
 		symbolKind = protocol.SymbolKindEnum
 	}
 
+	// Look for extends clause
+	parentType := ""
+	for i := startIdx + 2; i < len(p.tokens) && i < startIdx + 10; i++ {
+		if p.tokens[i].Value == "extends" && i+1 < len(p.tokens) {
+			parentType = p.tokens[i+1].Value
+			break
+		}
+		if p.tokens[i].Value == "{" {
+			break
+		}
+	}
+
 	// Find the end of the declaration (closing brace)
 	braceCount := 0
 	endIdx := startIdx
@@ -372,7 +384,7 @@ func (p *Parser) parseTypeDeclaration(startIdx int, kind string) *Symbol {
 			Start: protocol.Position{Line: nameToken.Line, Character: nameToken.Col},
 			End:   protocol.Position{Line: nameToken.Line, Character: nameToken.Col + len(nameToken.Value)},
 		},
-		Type:     kind,
+		Type:     parentType,
 		Children: []*Symbol{},
 	}
 }
