@@ -46,7 +46,6 @@ func (m *Manager) Open(uri string, content string, version int) error {
 		Lines:   strings.Split(content, "\n"),
 	}
 
-	// Parse the document
 	p := parser.NewParser(content)
 	symbols, err := p.Parse()
 	if err != nil {
@@ -68,13 +67,10 @@ func (m *Manager) Update(uri string, changes []protocol.TextDocumentContentChang
 		return nil
 	}
 
-	// Apply changes
 	for _, change := range changes {
 		if change.Range == nil {
-			// Full document update
 			doc.Content = change.Text
 		} else {
-			// Incremental update
 			doc.Content = applyChange(doc.Content, change)
 		}
 	}
@@ -82,13 +78,11 @@ func (m *Manager) Update(uri string, changes []protocol.TextDocumentContentChang
 	doc.Version = version
 	doc.Lines = strings.Split(doc.Content, "\n")
 
-	// Re-parse the document
 	p := parser.NewParser(doc.Content)
 	symbols, err := p.Parse()
-	if err != nil {
-		return err
+	if err == nil {
+		doc.Symbols = symbols
 	}
-	doc.Symbols = symbols
 
 	return nil
 }
@@ -134,42 +128,37 @@ func applyChange(content string, change protocol.TextDocumentContentChangeEvent)
 		return change.Text
 	}
 
-	lines := strings.Split(content, "\n")
-
-	startLine := change.Range.Start.Line
-	startChar := change.Range.Start.Character
-	endLine := change.Range.End.Line
-	endChar := change.Range.End.Character
+	var (
+		lines     = strings.Split(content, "\n")
+		startLine = change.Range.Start.Line
+		startChar = change.Range.Start.Character
+		endLine   = change.Range.End.Line
+		endChar   = change.Range.End.Character
+	)
 
 	if startLine < 0 || startLine >= len(lines) {
 		return content
 	}
 
-	// Build the new content
 	var result strings.Builder
 
-	// Lines before the change
-	for i := 0; i < startLine; i++ {
+	for i := range startLine {
 		result.WriteString(lines[i])
 		result.WriteString("\n")
 	}
 
-	// The line with the change start
 	if startLine < len(lines) {
 		result.WriteString(lines[startLine][:startChar])
 	}
 
-	// The new text
 	result.WriteString(change.Text)
 
-	// The line with the change end
 	if endLine < len(lines) {
 		if endChar <= len(lines[endLine]) {
 			result.WriteString(lines[endLine][endChar:])
 		}
 	}
 
-	// Lines after the change
 	for i := endLine + 1; i < len(lines); i++ {
 		result.WriteString("\n")
 		result.WriteString(lines[i])

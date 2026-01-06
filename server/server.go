@@ -9,7 +9,12 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"os/exec"
+	"path/filepath"
+	"regexp"
+	"strconv"
 	"strings"
+	"time"
 
 	"github.com/navid-m/hazel/document"
 	"github.com/navid-m/hazel/jsonrpc"
@@ -20,12 +25,13 @@ import (
 
 // Server represents the LSP server
 type Server struct {
-	reader   *jsonrpc.Reader
-	writer   *jsonrpc.Writer
-	docMgr   *document.Manager
-	stdlib   *stdlib.StdLib
-	debug    bool
-	shutdown bool
+	reader             *jsonrpc.Reader
+	writer             *jsonrpc.Writer
+	docMgr             *document.Manager
+	stdlib             *stdlib.StdLib
+	debug              bool
+	shutdown           bool
+	pendingDiagnostics map[string]*time.Timer
 }
 
 // NewServer creates a new LSP server
@@ -38,16 +44,19 @@ func NewServer(debug bool) *Server {
 	}()
 
 	return &Server{
-		reader: jsonrpc.NewReader(os.Stdin, debug),
-		writer: jsonrpc.NewWriter(os.Stdout, debug),
-		docMgr: document.NewManager(),
-		stdlib: stdLib,
-		debug:  debug,
+		reader:             jsonrpc.NewReader(os.Stdin, debug),
+		writer:             jsonrpc.NewWriter(os.Stdout, debug),
+		docMgr:             document.NewManager(),
+		stdlib:             stdLib,
+		debug:              debug,
+		pendingDiagnostics: make(map[string]*time.Timer),
 	}
 }
 
 // Run starts the server main loop
 func (s *Server) Run() error {
+	defer s.cleanup()
+
 	for !s.shutdown {
 		msg, err := s.reader.ReadMessage()
 		if err != nil {
@@ -65,6 +74,15 @@ func (s *Server) Run() error {
 		}
 	}
 	return nil
+}
+
+// cleanup stops all pending timers to prevent goroutine leaks
+func (s *Server) cleanup() {
+	for _, timer := range s.pendingDiagnostics {
+		if timer != nil {
+			timer.Stop()
+		}
+	}
 }
 
 // handleMessage handles incoming messages
@@ -160,7 +178,11 @@ func (s *Server) handleDidOpen(msg *jsonrpc.Message) error {
 		return err
 	}
 
-	return s.publishDiagnostics(params.TextDocument.URI)
+	time.AfterFunc(100*time.Millisecond, func() {
+		s.publishDiagnostics(params.TextDocument.URI)
+	})
+
+	return nil
 }
 
 // handleDidChange handles textDocument/didChange
@@ -169,12 +191,27 @@ func (s *Server) handleDidChange(msg *jsonrpc.Message) error {
 	if err := json.Unmarshal(msg.Params, &params); err != nil {
 		return err
 	}
-	if err := s.docMgr.Update(
+
+	log.Printf("handleDidChange called for URI: %s, Version: %d", params.TextDocument.URI, params.TextDocument.Version)
+
+	s.docMgr.Update(
 		params.TextDocument.URI, params.ContentChanges, params.TextDocument.Version,
-	); err != nil {
-		return err
+	)
+
+	if timer, exists := s.pendingDiagnostics[params.TextDocument.URI]; exists {
+		log.Printf("Cancelling existing diagnostics timer for URI: %s", params.TextDocument.URI)
+		timer.Stop()
 	}
-	return s.publishDiagnostics(params.TextDocument.URI)
+
+	log.Printf("Setting diagnostics timer for URI: %s", params.TextDocument.URI)
+	s.pendingDiagnostics[params.TextDocument.URI] = time.AfterFunc(250*time.Millisecond, func() {
+		log.Printf("Executing diagnostics for URI: %s after delay", params.TextDocument.URI)
+		s.publishDiagnostics(params.TextDocument.URI)
+
+		delete(s.pendingDiagnostics, params.TextDocument.URI)
+	})
+
+	return nil
 }
 
 // handleDidClose handles textDocument/didClose
@@ -193,7 +230,12 @@ func (s *Server) handleDidSave(msg *jsonrpc.Message) error {
 	if err := json.Unmarshal(msg.Params, &params); err != nil {
 		return err
 	}
-	return s.publishDiagnostics(params.TextDocument.URI)
+
+	time.AfterFunc(100*time.Millisecond, func() {
+		s.publishDiagnostics(params.TextDocument.URI)
+	})
+
+	return nil
 }
 
 // handleHover handles textDocument/hover
@@ -565,13 +607,26 @@ func (s *Server) handleRename(msg *jsonrpc.Message) error {
 
 // publishDiagnostics sends diagnostics for a document
 func (s *Server) publishDiagnostics(uri string) error {
+	log.Printf("publishDiagnostics called for URI: %s", uri)
+
 	doc, exists := s.docMgr.Get(uri)
 
 	var diagnostics []protocol.Diagnostic
 	if exists {
+		log.Printf("Document exists, analyzing diagnostics for URI: %s", uri)
 		diagnostics = s.analyzeDiagnostics(doc)
 	} else {
+		log.Printf("Document does not exist in memory for URI: %s", uri)
 		diagnostics = []protocol.Diagnostic{}
+	}
+
+	log.Printf("Sending %d diagnostics for URI: %s", len(diagnostics), uri)
+	for i, diag := range diagnostics {
+		log.Printf("  Diagnostic %d: Range=[%d:%d-%d:%d], Severity=%d, Message='%s'",
+			i,
+			diag.Range.Start.Line, diag.Range.Start.Character,
+			diag.Range.End.Line, diag.Range.End.Character,
+			diag.Severity, diag.Message)
 	}
 
 	params := protocol.PublishDiagnosticsParams{
@@ -584,50 +639,264 @@ func (s *Server) publishDiagnostics(uri string) error {
 
 // analyzeDiagnostics performs basic syntax analysis
 func (s *Server) analyzeDiagnostics(doc *document.Document) []protocol.Diagnostic {
+	log.Printf("Running diagnostics for URI: %s", doc.URI)
+	log.Printf("Document content length: %d", len(doc.Content))
+	if len(doc.Content) > 0 {
+		log.Printf("Document content preview: '%s...'", doc.Content[:min(100, len(doc.Content))])
+	}
+
+	compilerDiags := s.runHaxeCompiler(doc.URI)
+
+	log.Printf("Compiler returned %d diagnostics", len(compilerDiags))
+	for i, diag := range compilerDiags {
+		log.Printf("  Diagnostic %d: Range=[%d:%d-%d:%d], Severity=%d, Message='%s'",
+			i,
+			diag.Range.Start.Line, diag.Range.Start.Character,
+			diag.Range.End.Line, diag.Range.End.Character,
+			diag.Severity, diag.Message)
+	}
+
+	return compilerDiags
+}
+
+// extractClassName extracts the class name from Haxe content
+func (s *Server) extractClassName(content string) string {
+	re := regexp.MustCompile(`(?:class|interface|enum|abstract|typedef)\s+([A-Za-z_][A-Za-z0-9_]*)`)
+	matches := re.FindStringSubmatch(content)
+	if len(matches) > 1 {
+		return matches[1]
+	}
+	return ""
+}
+
+// runHaxeCompiler runs the Haxe compiler and parses its output
+func (s *Server) runHaxeCompiler(uri string) []protocol.Diagnostic {
 	var diagnostics []protocol.Diagnostic
 
-	lines := doc.Lines
-	for i, line := range lines {
-		openBraces := strings.Count(line, "{")
-		closeBraces := strings.Count(line, "}")
-		if openBraces != closeBraces {
+	log.Printf("runHaxeCompiler called for URI: %s", uri)
+
+	filePath := strings.TrimPrefix(uri, "file://")
+	if len(filePath) > 0 && filePath[0] != '/' {
+		filePath = "/" + filePath
+	}
+
+	log.Printf("Parsed file path: %s", filePath)
+
+	doc, exists := s.docMgr.Get(uri)
+	if !exists {
+		log.Printf("Document not found in memory: %s", uri)
+		return diagnostics
+	}
+
+	log.Printf("Document content to compile: %s", doc.Content)
+
+	className := s.extractClassName(doc.Content)
+	if className == "" {
+		className = "TempClass"
+	}
+
+	tempDir, err := os.MkdirTemp(filepath.Dir(filePath), "haxe_lsp_")
+	if err != nil {
+		log.Printf("Failed to create temporary directory: %v", err)
+		return diagnostics
+	}
+	defer os.RemoveAll(tempDir)
+	tempFilePath := filepath.Join(tempDir, className+".hx")
+	tempFile, err := os.Create(tempFilePath)
+	if err != nil {
+		log.Printf("Failed to create temporary file: %v", err)
+		return diagnostics
+	}
+
+	log.Printf("Created temporary file: %s", tempFile.Name())
+
+	content := doc.Content
+	if !strings.Contains(content, "package") {
+		content = "package;\n" + content
+	}
+
+	if _, err := tempFile.Write([]byte(content)); err != nil {
+		log.Printf("Failed to write to temporary file %s: %v", tempFile.Name, err)
+		tempFile.Close()
+		return diagnostics
+	}
+	tempFile.Close()
+
+	originalFilename := filepath.Base(filePath)
+
+	log.Printf("Running haxe command: haxe --no-output %s in directory: %s", tempFilePath, tempDir)
+
+	cmd := exec.Command("haxe", "--no-output", filepath.Base(tempFilePath))
+	cmd.Dir = tempDir
+	output, err := cmd.CombinedOutput()
+
+	log.Printf("Haxe command completed. Exit error: %v", err)
+	log.Printf("Haxe command output: %s", string(output))
+
+	lines := strings.Split(string(output), "\n")
+	for _, line := range lines {
+		if line == "" {
 			continue
 		}
 
-		trimmed := strings.TrimSpace(line)
-		codeOnly := trimmed
-		if idx := strings.Index(codeOnly, "//"); idx > 0 {
-			codeOnly = strings.TrimSpace(codeOnly[:idx])
-		}
+		log.Printf("Processing compiler output line: '%s'", line)
 
-		if len(codeOnly) > 0 && !strings.HasSuffix(codeOnly, ";") &&
-			!strings.HasSuffix(codeOnly, "{") &&
-			!strings.HasSuffix(codeOnly, "}") &&
-			!strings.HasPrefix(trimmed, "//") &&
-			!strings.HasPrefix(trimmed, "/*") &&
-			!strings.HasPrefix(trimmed, "*") &&
-			!strings.Contains(trimmed, "class ") &&
-			!strings.Contains(trimmed, "function ") &&
-			!strings.Contains(trimmed, "if ") &&
-			!strings.Contains(trimmed, "else") &&
-			!strings.Contains(trimmed, "for ") &&
-			!strings.Contains(trimmed, "while ") {
-
-			if strings.Contains(trimmed, "var ") || strings.Contains(trimmed, "return ") {
-				diagnostics = append(diagnostics, protocol.Diagnostic{
-					Range: protocol.Range{
-						Start: protocol.Position{Line: i, Character: 0},
-						End:   protocol.Position{Line: i, Character: len(line)},
-					},
-					Severity: protocol.DiagnosticSeverityWarning,
-					Source:   "hazel",
-					Message:  "Statement may be missing a semicolon",
-				})
+		diag := s.parseHaxeError(line, originalFilename)
+		if diag != nil {
+			log.Printf("Parsed diagnostic: Range=[%d:%d-%d:%d], Severity=%d, Message='%s'",
+				diag.Range.Start.Line, diag.Range.Start.Character,
+				diag.Range.End.Line, diag.Range.End.Character,
+				diag.Severity, diag.Message)
+			diagnostics = append(diagnostics, *diag)
+		} else {
+			genericDiag := s.parseGenericError(line, originalFilename)
+			if genericDiag != nil {
+				log.Printf("Parsed generic diagnostic: Range=[%d:%d-%d:%d], Severity=%d, Message='%s'",
+					genericDiag.Range.Start.Line, genericDiag.Range.Start.Character,
+					genericDiag.Range.End.Line, genericDiag.Range.End.Character,
+					genericDiag.Severity, genericDiag.Message)
+				diagnostics = append(diagnostics, *genericDiag)
+			} else {
+				log.Printf("Failed to parse line as diagnostic: '%s'", line)
 			}
 		}
 	}
 
+	log.Printf("Total diagnostics found: %d", len(diagnostics))
+
 	return diagnostics
+}
+
+// parseHaxeError parses a Haxe compiler error line
+//
+// Supports multiple formats:
+// 1. filename:line: characters start-end : message
+// 2. filename:line:column: message
+// 3. filename:line: message
+func (s *Server) parseHaxeError(line string, expectedFile string) *protocol.Diagnostic {
+	re1 := regexp.MustCompile(`^(.*?\.(hx|hxsl)):(\d+): characters (\d+)-(\d+) : (.+)$`)
+	matches1 := re1.FindStringSubmatch(line)
+	if len(matches1) == 7 {
+		filename := matches1[1]
+		if filename != expectedFile {
+			return nil
+		}
+
+		var (
+			lineNum, _   = strconv.Atoi(matches1[3])
+			startChar, _ = strconv.Atoi(matches1[4])
+			endChar, _   = strconv.Atoi(matches1[5])
+			message      = matches1[6]
+		)
+
+		lineNum--
+		startChar--
+		endChar--
+
+		severity := protocol.DiagnosticSeverityError
+		if strings.Contains(strings.ToLower(message), "warning") {
+			severity = protocol.DiagnosticSeverityWarning
+		}
+
+		return &protocol.Diagnostic{
+			Range: protocol.Range{
+				Start: protocol.Position{Line: lineNum, Character: startChar},
+				End:   protocol.Position{Line: lineNum, Character: endChar},
+			},
+			Severity: severity,
+			Source:   "haxe",
+			Message:  message,
+		}
+	}
+
+	re2 := regexp.MustCompile(`^(.*?\.(hx|hxsl)):(\d+):(\d+): (.+)$`)
+	matches2 := re2.FindStringSubmatch(line)
+	if len(matches2) == 6 {
+		filename := matches2[1]
+		if filename != expectedFile {
+			return nil
+		}
+
+		lineNum, _ := strconv.Atoi(matches2[3])
+		colNum, _ := strconv.Atoi(matches2[4])
+		message := matches2[5]
+
+		lineNum-- // Convert to 0-based
+		colNum--  // Convert to 0-based
+
+		severity := protocol.DiagnosticSeverityError
+		if strings.Contains(strings.ToLower(message), "warning") {
+			severity = protocol.DiagnosticSeverityWarning
+		}
+
+		return &protocol.Diagnostic{
+			Range: protocol.Range{
+				Start: protocol.Position{Line: lineNum, Character: colNum},
+				End:   protocol.Position{Line: lineNum, Character: colNum + 1},
+			},
+			Severity: severity,
+			Source:   "haxe",
+			Message:  message,
+		}
+	}
+
+	re3 := regexp.MustCompile(`^(.*?\.(hx|hxsl)):(\d+): (.+)$`)
+	matches3 := re3.FindStringSubmatch(line)
+	if len(matches3) == 5 {
+		filename := matches3[1]
+		if filename != expectedFile {
+			return nil
+		}
+
+		lineNum, _ := strconv.Atoi(matches3[3])
+		message := matches3[4]
+		lineNum--
+		severity := protocol.DiagnosticSeverityError
+		if strings.Contains(strings.ToLower(message), "warning") {
+			severity = protocol.DiagnosticSeverityWarning
+		}
+
+		return &protocol.Diagnostic{
+			Range: protocol.Range{
+				Start: protocol.Position{Line: lineNum, Character: 0},
+				End:   protocol.Position{Line: lineNum, Character: 100},
+			},
+			Severity: severity,
+			Source:   "haxe",
+			Message:  message,
+		}
+	}
+
+	return nil
+}
+
+// parseGenericError handles generic error messages that don't match standard formats
+func (s *Server) parseGenericError(line string, expectedFile string) *protocol.Diagnostic {
+	if strings.Contains(strings.ToLower(line), "package name must not be empty") ||
+		strings.Contains(strings.ToLower(line), "could not process argument") {
+		return &protocol.Diagnostic{
+			Range: protocol.Range{
+				Start: protocol.Position{Line: 0, Character: 0},
+				End:   protocol.Position{Line: 0, Character: 10},
+			},
+			Severity: protocol.DiagnosticSeverityError,
+			Source:   "haxe",
+			Message:  line,
+		}
+	}
+	if strings.Contains(strings.ToLower(line), "error") {
+		return &protocol.Diagnostic{
+			Range: protocol.Range{
+				Start: protocol.Position{Line: 0, Character: 0},
+				End:   protocol.Position{Line: 0, Character: 10},
+			},
+			Severity: protocol.DiagnosticSeverityError,
+			Source:   "haxe",
+			Message:  line,
+		}
+	}
+
+	return nil
 }
 
 // getCompletionItems returns completion items for a position
