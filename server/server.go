@@ -556,16 +556,46 @@ func (s *Server) handleSignatureHelp(msg *jsonrpc.Message) error {
 	}
 
 	var funcSymbol *parser.Symbol
-	for _, sym := range doc.Symbols {
-		if sym.Name == funcName && sym.Kind == protocol.SymbolKindFunction {
-			funcSymbol = sym
-			break
+	if strings.Contains(funcName, ".") {
+		parts := strings.Split(funcName, ".")
+		if len(parts) == 2 {
+			objName := parts[0]
+			methodName := parts[1]
+			objType := s.resolveVariableType(doc, objName)
+			if objType != "" {
+				funcSymbol = s.findMemberInType(doc, objType, methodName)
+			}
 		}
-		for _, child := range sym.Children {
-			if child.Name == funcName && child.Kind == protocol.SymbolKindFunction {
-				funcSymbol = child
+	} else {
+		for _, sym := range doc.Symbols {
+			if sym.Name == funcName && sym.Kind == protocol.SymbolKindFunction {
+				funcSymbol = sym
 				break
 			}
+			for _, child := range sym.Children {
+				if child.Name == funcName && child.Kind == protocol.SymbolKindFunction {
+					funcSymbol = child
+					break
+				}
+			}
+		}
+
+		if funcSymbol == nil {
+			if currentClass := s.findCurrentClass(doc, params.Position); currentClass != nil {
+				for _, child := range currentClass.Children {
+					if child.Name == funcName && child.Kind == protocol.SymbolKindFunction {
+						funcSymbol = child
+						break
+					}
+				}
+				if funcSymbol == nil && currentClass.Type != "" {
+					funcSymbol = s.findMemberInType(doc, currentClass.Type, funcName)
+				}
+			}
+		}
+
+		if funcSymbol == nil {
+			funcSymbol = s.findImportedSymbol(doc, funcName)
 		}
 	}
 
