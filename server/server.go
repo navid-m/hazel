@@ -551,7 +551,7 @@ func (s *Server) handleDefinition(msg *jsonrpc.Message) error {
 			if symbol == nil {
 				return s.writer.WriteResponse(msg.ID, nil)
 			}
-			
+
 			location := s.getSymbolLocation(word)
 			if location != nil {
 				return s.writer.WriteResponse(msg.ID, location)
@@ -574,56 +574,86 @@ func (s *Server) getSymbolLocation(name string) *protocol.Location {
 	}
 
 	parts := strings.Split(name, ".")
-	
+
+	for _, srcPath := range s.limeProject.Sources {
+		if location := s.findSymbolInPath(name, parts, srcPath); location != nil {
+			return location
+		}
+	}
+
 	for _, libName := range s.limeProject.Haxelibs {
 		libPath := lime.GetHaxelibPath(libName)
 		if libPath == "" {
 			continue
 		}
 
-		if len(parts) >= 2 {
-			relPath := strings.Join(parts, string(filepath.Separator)) + ".hx"
-			fullPath := filepath.Join(libPath, relPath)
-			if _, err := os.Stat(fullPath); err == nil {
-				return &protocol.Location{
-					URI: "file://" + fullPath,
-					Range: protocol.Range{
-						Start: protocol.Position{Line: 0, Character: 0},
-						End:   protocol.Position{Line: 0, Character: 0},
-					},
-				}
+		if location := s.findSymbolInPath(name, parts, libPath); location != nil {
+			return location
+		}
+	}
+
+	return nil
+}
+
+func (s *Server) findSymbolInPath(name string, parts []string, basePath string) *protocol.Location {
+	if len(parts) >= 2 {
+		relPath := strings.Join(parts, string(filepath.Separator)) + ".hx"
+		fullPath := filepath.Join(basePath, relPath)
+		if _, err := os.Stat(fullPath); err == nil {
+			return &protocol.Location{
+				URI: "file://" + fullPath,
+				Range: protocol.Range{
+					Start: protocol.Position{Line: 0, Character: 0},
+					End:   protocol.Position{Line: 0, Character: 0},
+				},
 			}
-		} else {
-			var foundPath string
-			filepath.Walk(libPath, func(p string, info os.FileInfo, err error) error {
-				if err != nil || info.IsDir() || !strings.HasSuffix(p, ".hx") {
-					return nil
-				}
-				content, err := os.ReadFile(p)
-				if err != nil {
-					return nil
-				}
-				parser := parser.NewParser(string(content))
-				syms, err := parser.Parse()
-				if err == nil {
-					for _, sym := range syms {
-						if sym.Name == name {
-							foundPath = p
-							return filepath.SkipAll
-						}
-					}
-				}
+		}
+	}
+
+	var foundPath string
+	filepath.Walk(basePath, func(p string, info os.FileInfo, err error) error {
+		if err != nil || info.IsDir() || !strings.HasSuffix(p, ".hx") {
+			return nil
+		}
+
+		relPath, _ := filepath.Rel(basePath, p)
+		relPath = strings.TrimSuffix(relPath, ".hx")
+		pathParts := strings.Split(relPath, string(filepath.Separator))
+
+		if len(parts) > 1 {
+			expectedPath := strings.Join(parts[:len(parts)-1], string(filepath.Separator))
+			actualPath := strings.Join(pathParts[:len(pathParts)-1], string(filepath.Separator))
+			if expectedPath != actualPath {
 				return nil
-			})
-			if foundPath != "" {
-				return &protocol.Location{
-					URI: "file://" + foundPath,
-					Range: protocol.Range{
-						Start: protocol.Position{Line: 0, Character: 0},
-						End:   protocol.Position{Line: 0, Character: 0},
-					},
+			}
+		}
+
+		content, err := os.ReadFile(p)
+		if err != nil {
+			return nil
+		}
+
+		parser := parser.NewParser(string(content))
+		syms, err := parser.Parse()
+		if err == nil {
+			targetName := parts[len(parts)-1]
+			for _, sym := range syms {
+				if sym.Name == targetName {
+					foundPath = p
+					return filepath.SkipAll
 				}
 			}
+		}
+		return nil
+	})
+
+	if foundPath != "" {
+		return &protocol.Location{
+			URI: "file://" + foundPath,
+			Range: protocol.Range{
+				Start: protocol.Position{Line: 0, Character: 0},
+				End:   protocol.Position{Line: 0, Character: 0},
+			},
 		}
 	}
 
@@ -840,7 +870,7 @@ func (s *Server) runHaxeCompiler(uri string) []protocol.Diagnostic {
 	tempFile.Close()
 
 	args := []string{"--no-output", filepath.Base(tempFilePath)}
-	
+
 	if s.limeProject != nil {
 		for _, src := range s.limeProject.Sources {
 			args = append(args, "-cp", src)
@@ -1023,7 +1053,7 @@ func (s *Server) getCompletionItems(
 
 	line := doc.GetLineContent(pos.Line)
 	log.Printf("[DEBUG] getCompletionItems: pos.Character=%d, line length=%d", pos.Character, len(line))
-	
+
 	if pos.Character >= 2 && pos.Character <= len(line) {
 		prefix := line[:pos.Character]
 		log.Printf("[DEBUG] Checking prefix: %q", prefix)
@@ -1106,7 +1136,7 @@ func (s *Server) getCompletionItems(
 // getMemberCompletions returns completions for members of a type
 func (s *Server) getMemberCompletions(typeName string) []protocol.CompletionItem {
 	var items []protocol.CompletionItem
-	
+
 	symbols := s.stdlib.GetAllSymbols(typeName)
 	for _, sym := range symbols {
 		items = append(items, s.symbolToCompletionItem(sym))
@@ -1114,7 +1144,7 @@ func (s *Server) getMemberCompletions(typeName string) []protocol.CompletionItem
 			items = append(items, s.symbolToCompletionItem(child))
 		}
 	}
-	
+
 	return items
 }
 
@@ -1125,11 +1155,11 @@ func (s *Server) isInsideComment(doc *document.Document, pos protocol.Position) 
 		return false
 	}
 	prefix := line[:pos.Character]
-	
+
 	if strings.Contains(prefix, "//") {
 		return true
 	}
-	
+
 	inMultiline := false
 	for i := 0; i <= pos.Line; i++ {
 		l := doc.GetLineContent(i)
@@ -1157,16 +1187,24 @@ func (s *Server) isInsideComment(doc *document.Document, pos protocol.Position) 
 func (s *Server) getImportedSymbols(doc *document.Document) []string {
 	var symbols []string
 	importRe := regexp.MustCompile(`import\s+([\w.]+)`)
-	
+
 	for _, line := range doc.Lines {
 		matches := importRe.FindStringSubmatch(line)
 		if len(matches) > 1 {
-			parts := strings.Split(matches[1], ".")
+			importPath := matches[1]
+			parts := strings.Split(importPath, ".")
 			symbolName := parts[len(parts)-1]
 			symbols = append(symbols, symbolName)
+
+			if s.limeProject != nil {
+				if resolvedSymbol := s.findSymbolInProject(importPath); resolvedSymbol != nil {
+					symbols = append(symbols, resolvedSymbol.Name)
+				}
+			}
 		}
 	}
 
+	// Index available symbols from haxelibs for completion
 	if s.limeProject != nil {
 		for _, libName := range s.limeProject.Haxelibs {
 			libPath := lime.GetHaxelibPath(libName)
@@ -1181,19 +1219,26 @@ func (s *Server) getImportedSymbols(doc *document.Document) []string {
 
 func (s *Server) indexHaxelib(path string) []string {
 	var symbols []string
+	seen := make(map[string]bool)
+
 	filepath.Walk(path, func(p string, info os.FileInfo, err error) error {
 		if err != nil || info.IsDir() || !strings.HasSuffix(p, ".hx") {
 			return nil
 		}
+
 		content, err := os.ReadFile(p)
 		if err != nil {
 			return nil
 		}
+
 		parser := parser.NewParser(string(content))
 		syms, err := parser.Parse()
 		if err == nil {
 			for _, sym := range syms {
-				symbols = append(symbols, sym.Name)
+				if !seen[sym.Name] {
+					symbols = append(symbols, sym.Name)
+					seen[sym.Name] = true
+				}
 			}
 		}
 		return nil
@@ -1357,39 +1402,11 @@ func (s *Server) findSymbolInProject(name string) *parser.Symbol {
 	}
 
 	parts := strings.Split(name, ".")
-	if len(parts) < 2 {
-		for _, libName := range s.limeProject.Haxelibs {
-			libPath := lime.GetHaxelibPath(libName)
-			if libPath == "" {
-				continue
-			}
 
-			var found *parser.Symbol
-			filepath.Walk(libPath, func(p string, info os.FileInfo, err error) error {
-				if err != nil || info.IsDir() || !strings.HasSuffix(p, ".hx") {
-					return nil
-				}
-				content, err := os.ReadFile(p)
-				if err != nil {
-					return nil
-				}
-				parser := parser.NewParser(string(content))
-				syms, err := parser.Parse()
-				if err == nil {
-					for _, sym := range syms {
-						if sym.Name == name {
-							found = sym
-							return filepath.SkipAll
-						}
-					}
-				}
-				return nil
-			})
-			if found != nil {
-				return found
-			}
+	for _, srcPath := range s.limeProject.Sources {
+		if symbol := s.findSymbolInProjectPath(name, parts, srcPath); symbol != nil {
+			return symbol
 		}
-		return nil
 	}
 
 	for _, libName := range s.limeProject.Haxelibs {
@@ -1398,16 +1415,88 @@ func (s *Server) findSymbolInProject(name string) *parser.Symbol {
 			continue
 		}
 
-		relPath := strings.Join(parts, string(filepath.Separator)) + ".hx"
-		fullPath := filepath.Join(libPath, relPath)
-
-		if content, err := os.ReadFile(fullPath); err == nil {
-			p := parser.NewParser(string(content))
-			if symbols, err := p.Parse(); err == nil && len(symbols) > 0 {
-				return symbols[0]
-			}
+		if symbol := s.findSymbolInProjectPath(name, parts, libPath); symbol != nil {
+			return symbol
 		}
 	}
 
 	return nil
+}
+
+func (s *Server) findSymbolInProjectPath(name string, parts []string, basePath string) *parser.Symbol {
+	log.Printf("[DEBUG] findSymbolInProjectPath: name=%s, parts=%v, basePath=%s", name, parts, basePath)
+
+	if len(parts) >= 2 {
+		relPath := strings.Join(parts, string(filepath.Separator)) + ".hx"
+		fullPath := filepath.Join(basePath, relPath)
+		log.Printf("[DEBUG] Trying direct path: %s", fullPath)
+
+		if content, err := os.ReadFile(fullPath); err == nil {
+			log.Printf("[DEBUG] Found file at direct path: %s", fullPath)
+			p := parser.NewParser(string(content))
+			if symbols, err := p.Parse(); err == nil {
+				targetName := parts[len(parts)-1]
+				log.Printf("[DEBUG] Looking for symbol '%s' in %d parsed symbols", targetName, len(symbols))
+				for _, sym := range symbols {
+					log.Printf("[DEBUG] Found symbol: %s", sym.Name)
+					if sym.Name == targetName {
+						log.Printf("[DEBUG] Symbol match found: %s", sym.Name)
+						return sym
+					}
+				}
+				if len(symbols) > 0 {
+					log.Printf("[DEBUG] Returning first symbol: %s", symbols[0].Name)
+					return symbols[0]
+				}
+			} else {
+				log.Printf("[DEBUG] Parse error: %v", err)
+			}
+		} else {
+			log.Printf("[DEBUG] File not found at direct path: %v", err)
+		}
+	}
+
+	log.Printf("[DEBUG] Falling back to directory walk for: %s", name)
+	var found *parser.Symbol
+	filepath.Walk(basePath, func(p string, info os.FileInfo, err error) error {
+		if err != nil || info.IsDir() || !strings.HasSuffix(p, ".hx") {
+			return nil
+		}
+
+		relPath, _ := filepath.Rel(basePath, p)
+		relPath = strings.TrimSuffix(relPath, ".hx")
+		pathParts := strings.Split(relPath, string(filepath.Separator))
+
+		if len(parts) > 1 {
+			expectedPath := strings.Join(parts[:len(parts)-1], string(filepath.Separator))
+			actualPath := strings.Join(pathParts[:len(pathParts)-1], string(filepath.Separator))
+			if expectedPath != actualPath {
+				return nil
+			}
+		}
+
+		content, err := os.ReadFile(p)
+		if err != nil {
+			return nil
+		}
+
+		parser := parser.NewParser(string(content))
+		syms, err := parser.Parse()
+		if err == nil {
+			targetName := parts[len(parts)-1]
+			for _, sym := range syms {
+				if sym.Name == targetName {
+					log.Printf("[DEBUG] Found symbol '%s' in file: %s", targetName, p)
+					found = sym
+					return filepath.SkipAll
+				}
+			}
+		}
+		return nil
+	})
+
+	if found == nil {
+		log.Printf("[DEBUG] Symbol not found: %s", name)
+	}
+	return found
 }
