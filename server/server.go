@@ -1279,6 +1279,37 @@ func (s *Server) findSymbolInProject(name string) *parser.Symbol {
 
 	parts := strings.Split(name, ".")
 	if len(parts) < 2 {
+		for _, libName := range s.limeProject.Haxelibs {
+			libPath := lime.GetHaxelibPath(libName)
+			if libPath == "" {
+				continue
+			}
+
+			var found *parser.Symbol
+			filepath.Walk(libPath, func(p string, info os.FileInfo, err error) error {
+				if err != nil || info.IsDir() || !strings.HasSuffix(p, ".hx") {
+					return nil
+				}
+				content, err := os.ReadFile(p)
+				if err != nil {
+					return nil
+				}
+				parser := parser.NewParser(string(content))
+				syms, err := parser.Parse()
+				if err == nil {
+					for _, sym := range syms {
+						if sym.Name == name {
+							found = sym
+							return filepath.SkipAll
+						}
+					}
+				}
+				return nil
+			})
+			if found != nil {
+				return found
+			}
+		}
 		return nil
 	}
 
