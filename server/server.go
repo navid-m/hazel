@@ -595,9 +595,14 @@ func (s *Server) analyzeDiagnostics(doc *document.Document) []protocol.Diagnosti
 		}
 
 		trimmed := strings.TrimSpace(line)
-		if len(trimmed) > 0 && !strings.HasSuffix(trimmed, ";") &&
-			!strings.HasSuffix(trimmed, "{") &&
-			!strings.HasSuffix(trimmed, "}") &&
+		codeOnly := trimmed
+		if idx := strings.Index(codeOnly, "//"); idx > 0 {
+			codeOnly = strings.TrimSpace(codeOnly[:idx])
+		}
+
+		if len(codeOnly) > 0 && !strings.HasSuffix(codeOnly, ";") &&
+			!strings.HasSuffix(codeOnly, "{") &&
+			!strings.HasSuffix(codeOnly, "}") &&
 			!strings.HasPrefix(trimmed, "//") &&
 			!strings.HasPrefix(trimmed, "/*") &&
 			!strings.HasPrefix(trimmed, "*") &&
