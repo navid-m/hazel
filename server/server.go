@@ -901,6 +901,26 @@ func (s *Server) getCompletionItems(
 		return []protocol.CompletionItem{}
 	}
 
+	if pos.Character > 0 && pos.Character <= len(line) {
+		prefix := line[:pos.Character]
+		dotIdx := strings.LastIndex(prefix, ".")
+		if dotIdx > 0 {
+			typeName := ""
+			for i := dotIdx - 1; i >= 0; i-- {
+				if !parser.IsIdentifierChar(rune(prefix[i])) {
+					typeName = prefix[i+1 : dotIdx]
+					break
+				}
+				if i == 0 {
+					typeName = prefix[:dotIdx]
+				}
+			}
+			if typeName != "" {
+				return s.getMemberCompletions(typeName)
+			}
+		}
+	}
+
 	keywords := []string{
 		"abstract", "break", "case", "cast", "catch", "class", "continue", "default",
 		"do", "dynamic", "else", "enum", "extends", "extern", "false", "final", "for",
@@ -942,6 +962,21 @@ func (s *Server) getCompletionItems(
 		})
 	}
 
+	return items
+}
+
+// getMemberCompletions returns completions for members of a type
+func (s *Server) getMemberCompletions(typeName string) []protocol.CompletionItem {
+	var items []protocol.CompletionItem
+	
+	symbols := s.stdlib.GetAllSymbols(typeName)
+	for _, sym := range symbols {
+		items = append(items, s.symbolToCompletionItem(sym))
+		for _, child := range sym.Children {
+			items = append(items, s.symbolToCompletionItem(child))
+		}
+	}
+	
 	return items
 }
 
