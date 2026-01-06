@@ -18,7 +18,6 @@ import (
 
 	"github.com/navid-m/hazel/document"
 	"github.com/navid-m/hazel/jsonrpc"
-
 	"github.com/navid-m/hazel/lime"
 	"github.com/navid-m/hazel/parser"
 	"github.com/navid-m/hazel/protocol"
