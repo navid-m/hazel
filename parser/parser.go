@@ -411,14 +411,13 @@ func (p *Parser) parseFunction(startIdx int) *Symbol {
 	}
 
 	returnType := "Void"
-	for i := startIdx; i < len(p.tokens) && i < startIdx+20; i++ {
-		if p.tokens[i].Value == ":" {
-			if i+1 < len(p.tokens) && p.tokens[i+1].Type == TokenIdentifier {
-				returnType = p.tokens[i+1].Value
+	for i := startIdx; i < len(p.tokens) && i < startIdx+30; i++ {
+		if p.tokens[i].Value == ")" {
+			if i+1 < len(p.tokens) && p.tokens[i+1].Value == ":" {
+				if i+2 < len(p.tokens) && p.tokens[i+2].Type == TokenIdentifier {
+					returnType = p.tokens[i+2].Value
+				}
 			}
-			break
-		}
-		if p.tokens[i].Value == "{" || p.tokens[i].Value == ";" {
 			break
 		}
 	}
