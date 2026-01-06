@@ -652,6 +652,18 @@ func (s *Server) handleDefinition(msg *jsonrpc.Message) error {
 		return s.writer.WriteResponse(msg.ID, nil)
 	}
 
+	currentLine := doc.GetLineContent(params.Position.Line)
+	if strings.TrimSpace(currentLine) != "" && strings.HasPrefix(strings.TrimSpace(currentLine), "import") {
+		importMatch := regexp.MustCompile(`import\s+([\w.]+)`).FindStringSubmatch(currentLine)
+		if len(importMatch) > 1 {
+			importPath := importMatch[1]
+			location := s.getSymbolLocation(importPath)
+			if location != nil {
+				return s.writer.WriteResponse(msg.ID, location)
+			}
+		}
+	}
+
 	line := doc.GetLineContent(params.Position.Line)
 	log.Printf("[DEBUG] Definition line: %q, pos: %d", line, params.Position.Character)
 	if params.Position.Character > 0 && params.Position.Character <= len(line) {
@@ -788,7 +800,6 @@ func (s *Server) getTypeDefinitionLocation(typeName string, memberName string) *
 		return nil
 	}
 
-	// Search in project sources and haxelibs
 	searchPaths := append(s.limeProject.Sources, []string{}...)
 	for _, libName := range s.limeProject.Haxelibs {
 		if libPath := lime.GetHaxelibPath(libName); libPath != "" {

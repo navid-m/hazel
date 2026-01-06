@@ -448,22 +448,46 @@ func (p *Parser) parseParameters(startIdx int) []Parameter {
 	for i < len(p.tokens) && p.tokens[i].Value != ")" {
 		if p.tokens[i].Type == TokenIdentifier {
 			param := Parameter{Name: p.tokens[i].Value}
+			i++
 
-			if i+1 < len(p.tokens) && p.tokens[i+1].Value == "?" {
+			if i < len(p.tokens) && p.tokens[i].Value == "?" {
 				param.Optional = true
 				i++
 			}
 
-			if i+1 < len(p.tokens) && p.tokens[i+1].Value == ":" {
-				if i+2 < len(p.tokens) && p.tokens[i+2].Type == TokenIdentifier {
-					param.Type = p.tokens[i+2].Value
-					i += 2
+			if i < len(p.tokens) && p.tokens[i].Value == ":" {
+				i++
+				if i < len(p.tokens) && p.tokens[i].Type == TokenIdentifier {
+					param.Type = p.tokens[i].Value
+					i++
+				}
+			}
+
+			if i < len(p.tokens) && p.tokens[i].Value == "=" {
+				i++
+				parenCount := 0
+				for i < len(p.tokens) && !(p.tokens[i].Value == "," && parenCount == 0) && p.tokens[i].Value != ")" {
+					if p.tokens[i].Value == "(" {
+						parenCount++
+					} else if p.tokens[i].Value == ")" {
+						if parenCount > 0 {
+							parenCount--
+						} else {
+							break
+						}
+					}
+					i++
 				}
 			}
 
 			params = append(params, param)
+
+			if i < len(p.tokens) && p.tokens[i].Value == "," {
+				i++
+			}
+		} else {
+			i++
 		}
-		i++
 	}
 
 	return params
