@@ -105,19 +105,19 @@ func (s *Server) handleMessage(msg *jsonrpc.Message) error {
 // handleInitialize handles the initialize request
 func (s *Server) handleInitialize(msg *jsonrpc.Message) error {
 	result := map[string]any{
-		"capabilities": map[string]interface{}{
-			"textDocumentSync": map[string]interface{}{
+		"capabilities": map[string]any{
+			"textDocumentSync": map[string]any{
 				"openClose": true,
 				"change":    2, // Incremental
-				"save": map[string]interface{}{
+				"save": map[string]any{
 					"includeText": true,
 				},
 			},
 			"hoverProvider": true,
-			"completionProvider": map[string]interface{}{
+			"completionProvider": map[string]any{
 				"triggerCharacters": []string{".", "("},
 			},
-			"signatureHelpProvider": map[string]interface{}{
+			"signatureHelpProvider": map[string]any{
 				"triggerCharacters": []string{"(", ","},
 			},
 			"definitionProvider":      true,
@@ -126,7 +126,7 @@ func (s *Server) handleInitialize(msg *jsonrpc.Message) error {
 			"workspaceSymbolProvider": true,
 			"renameProvider":          true,
 		},
-		"serverInfo": map[string]interface{}{
+		"serverInfo": map[string]any{
 			"name":    "hazel",
 			"version": "1.0.0",
 		},
