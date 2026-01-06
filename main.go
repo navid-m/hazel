@@ -1,5 +1,5 @@
 // Hazel - A Language Server Protocol implementation for Haxe
-// Copyright (C) 2025
+// Copyright Navid Momtahen (C) 2025
 // License: GPL-3.0
 
 package main
