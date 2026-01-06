@@ -135,7 +135,7 @@ func (s *Server) handleMessage(msg *jsonrpc.Message) error {
 
 // handleInitialize handles the initialize request
 func (s *Server) handleInitialize(msg *jsonrpc.Message) error {
-	var params map[string]interface{}
+	var params map[string]any
 	if err := json.Unmarshal(msg.Params, &params); err == nil {
 		if rootURI, ok := params["rootUri"].(string); ok {
 			s.projectRoot = strings.TrimPrefix(rootURI, "file://")
