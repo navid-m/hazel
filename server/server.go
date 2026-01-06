@@ -620,7 +620,7 @@ func (s *Server) findSymbolInPath(name string, parts []string, basePath string) 
 		relPath = strings.TrimSuffix(relPath, ".hx")
 		pathParts := strings.Split(relPath, string(filepath.Separator))
 
-		if len(parts) > 1 {
+		if len(parts) > 1 && len(pathParts) > 1 {
 			expectedPath := strings.Join(parts[:len(parts)-1], string(filepath.Separator))
 			actualPath := strings.Join(pathParts[:len(pathParts)-1], string(filepath.Separator))
 			if expectedPath != actualPath {
@@ -1184,7 +1184,11 @@ func (s *Server) isInsideComment(doc *document.Document, pos protocol.Position) 
 	if pos.Character > len(line) {
 		return false
 	}
-	prefix := line[:pos.Character]
+	charPos := pos.Character
+	if charPos > len(line) {
+		charPos = len(line)
+	}
+	prefix := line[:charPos]
 
 	if strings.Contains(prefix, "//") {
 		return true
@@ -1201,7 +1205,11 @@ func (s *Server) isInsideComment(doc *document.Document, pos protocol.Position) 
 				inMultiline = false
 			}
 		} else {
-			beforePos := l[:pos.Character]
+			charPos := pos.Character
+			if charPos > len(l) {
+				charPos = len(l)
+			}
+			beforePos := l[:charPos]
 			if strings.Contains(beforePos, "/*") {
 				inMultiline = true
 			}
@@ -1234,7 +1242,6 @@ func (s *Server) getImportedSymbols(doc *document.Document) []string {
 		}
 	}
 
-	// Index available symbols from haxelibs for completion
 	if s.limeProject != nil {
 		for _, libName := range s.limeProject.Haxelibs {
 			libPath := lime.GetHaxelibPath(libName)
@@ -1454,6 +1461,12 @@ func (s *Server) findSymbolInProject(name string) *parser.Symbol {
 }
 
 func (s *Server) findSymbolInProjectPath(name string, parts []string, basePath string) *parser.Symbol {
+	defer func() {
+		if r := recover(); r != nil {
+			log.Printf("[ERROR] Panic in findSymbolInProjectPath: %v", r)
+		}
+	}()
+
 	log.Printf("[DEBUG] findSymbolInProjectPath: name=%s, parts=%v, basePath=%s", name, parts, basePath)
 
 	if len(parts) >= 2 {
@@ -1497,7 +1510,7 @@ func (s *Server) findSymbolInProjectPath(name string, parts []string, basePath s
 		relPath = strings.TrimSuffix(relPath, ".hx")
 		pathParts := strings.Split(relPath, string(filepath.Separator))
 
-		if len(parts) > 1 {
+		if len(parts) > 1 && len(pathParts) > 1 {
 			expectedPath := strings.Join(parts[:len(parts)-1], string(filepath.Separator))
 			actualPath := strings.Join(pathParts[:len(pathParts)-1], string(filepath.Separator))
 			if expectedPath != actualPath {

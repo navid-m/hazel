@@ -138,6 +138,9 @@ func (p *Parser) tokenize() {
 					i++
 				}
 				i += 2
+				if i > len(p.content) {
+					i = len(p.content)
+				}
 				p.tokens = append(p.tokens, Token{
 					Type:  TokenComment,
 					Value: p.content[start:i],
@@ -170,6 +173,9 @@ func (p *Parser) tokenize() {
 			}
 			i++
 			col++
+			if i > len(p.content) {
+				i = len(p.content)
+			}
 			p.tokens = append(p.tokens, Token{
 				Type:  TokenString,
 				Value: p.content[start:i],
@@ -180,13 +186,15 @@ func (p *Parser) tokenize() {
 			continue
 		}
 
-		// Numbers
 		if unicode.IsDigit(rune(ch)) {
 			start := i
 			startCol := col
 			for i < len(p.content) && (unicode.IsDigit(rune(p.content[i])) || p.content[i] == '.') {
 				i++
 				col++
+			}
+			if i > len(p.content) {
+				i = len(p.content)
 			}
 			p.tokens = append(p.tokens, Token{
 				Type:  TokenNumber,
@@ -198,13 +206,15 @@ func (p *Parser) tokenize() {
 			continue
 		}
 
-		// Identifiers and keywords
 		if unicode.IsLetter(rune(ch)) || ch == '_' {
 			start := i
 			startCol := col
 			for i < len(p.content) && (unicode.IsLetter(rune(p.content[i])) || unicode.IsDigit(rune(p.content[i])) || p.content[i] == '_') {
 				i++
 				col++
+			}
+			if i > len(p.content) {
+				i = len(p.content)
 			}
 			value := p.content[start:i]
 			tokenType := TokenIdentifier
@@ -221,7 +231,6 @@ func (p *Parser) tokenize() {
 			continue
 		}
 
-		// Symbols and operators
 		p.tokens = append(p.tokens, Token{
 			Type:  TokenSymbol,
 			Value: string(ch),
@@ -365,13 +374,11 @@ func (p *Parser) parseFunction(startIdx int) *Symbol {
 		return nil
 	}
 
-	// Parse parameters
 	var params []Parameter
 	if startIdx+2 < len(p.tokens) && p.tokens[startIdx+2].Value == "(" {
 		params = p.parseParameters(startIdx + 2)
 	}
 
-	// Find return type
 	returnType := "Void"
 	for i := startIdx; i < len(p.tokens) && i < startIdx+20; i++ {
 		if p.tokens[i].Value == ":" {
@@ -405,18 +412,16 @@ func (p *Parser) parseFunction(startIdx int) *Symbol {
 func (p *Parser) parseParameters(startIdx int) []Parameter {
 	var params []Parameter
 
-	i := startIdx + 1 // Skip opening paren
+	i := startIdx + 1
 	for i < len(p.tokens) && p.tokens[i].Value != ")" {
 		if p.tokens[i].Type == TokenIdentifier {
 			param := Parameter{Name: p.tokens[i].Value}
 
-			// Check for optional parameter
 			if i+1 < len(p.tokens) && p.tokens[i+1].Value == "?" {
 				param.Optional = true
 				i++
 			}
 
-			// Check for type annotation
 			if i+1 < len(p.tokens) && p.tokens[i+1].Value == ":" {
 				if i+2 < len(p.tokens) && p.tokens[i+2].Type == TokenIdentifier {
 					param.Type = p.tokens[i+2].Value
@@ -507,7 +512,6 @@ func GetWordAtPosition(content string, pos protocol.Position) string {
 		return ""
 	}
 
-	// Find word boundaries
 	start := pos.Character
 	end := pos.Character
 
@@ -517,6 +521,10 @@ func GetWordAtPosition(content string, pos protocol.Position) string {
 
 	for end < len(line) && isIdentifierChar(rune(line[end])) {
 		end++
+	}
+
+	if end > len(line) {
+		end = len(line)
 	}
 
 	return line[start:end]
