@@ -463,7 +463,7 @@ func (p *Parser) parseVariable(startIdx int) *Symbol {
 	}
 
 	varType := "Dynamic"
-	
+
 	// Look for explicit type annotation (var name:Type)
 	if startIdx+2 < len(p.tokens) && p.tokens[startIdx+2].Value == ":" {
 		if startIdx+3 < len(p.tokens) && p.tokens[startIdx+3].Type == TokenIdentifier {
@@ -471,10 +471,10 @@ func (p *Parser) parseVariable(startIdx int) *Symbol {
 		}
 	} else {
 		// Look for type inference from 'new' expression (var name = new Type())
-		for i := startIdx + 2; i < len(p.tokens) && i < startIdx + 10; i++ {
-			if p.tokens[i].Value == "=" && i+1 < len(p.tokens) && 
-			   p.tokens[i+1].Value == "new" && i+2 < len(p.tokens) &&
-			   p.tokens[i+2].Type == TokenIdentifier {
+		for i := startIdx + 2; i < len(p.tokens) && i < startIdx+10; i++ {
+			if p.tokens[i].Value == "=" && i+1 < len(p.tokens) &&
+				p.tokens[i+1].Value == "new" && i+2 < len(p.tokens) &&
+				p.tokens[i+2].Type == TokenIdentifier {
 				varType = p.tokens[i+2].Value
 				break
 			}
@@ -534,7 +534,7 @@ func (p *Parser) parseImport(start int) *Import {
 
 	var path strings.Builder
 	i := start + 1 // Skip "import" keyword
-	
+
 	// Build the import path
 	for i < len(p.tokens) && p.tokens[i].Value != ";" {
 		if p.tokens[i].Type == TokenIdentifier || p.tokens[i].Value == "." {
@@ -610,14 +610,13 @@ func FindReferences(content string, symbolName string) []protocol.Location {
 	var locations []protocol.Location
 	lines := strings.Split(content, "\n")
 
-	// Simple regex-based reference finding
 	pattern := regexp.MustCompile(`\b` + regexp.QuoteMeta(symbolName) + `\b`)
 
 	for lineNum, line := range lines {
 		matches := pattern.FindAllStringIndex(line, -1)
 		for _, match := range matches {
 			locations = append(locations, protocol.Location{
-				URI: "", // Will be filled by caller
+				URI: "",
 				Range: protocol.Range{
 					Start: protocol.Position{Line: lineNum, Character: match[0]},
 					End:   protocol.Position{Line: lineNum, Character: match[1]},

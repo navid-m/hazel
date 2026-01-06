@@ -672,26 +672,21 @@ func (s *Server) getTypeDefinitionLocation(typeName string, memberName string) *
 
 // findMemberLocationInPath searches for a member within a type in the given path
 func (s *Server) findMemberLocationInPath(typeName string, memberName string, basePath string) *protocol.Location {
-	// Try direct file path first
 	parts := strings.Split(typeName, ".")
 	if len(parts) >= 1 {
 		relPath := strings.Join(parts, string(filepath.Separator)) + ".hx"
 		fullPath := filepath.Join(basePath, relPath)
-		
+
 		if content, err := os.ReadFile(fullPath); err == nil {
-			p := parser.NewParser(string(content))
-			if symbols, err := p.Parse(); err == nil {
-				for _, sym := range symbols {
-					if sym.Name == parts[len(parts)-1] {
-						// Found the type, now look for the member
-						for _, child := range sym.Children {
-							if child.Name == memberName {
-								return &protocol.Location{
-									URI:   "file://" + fullPath,
-									Range: child.Selection,
-								}
-							}
-						}
+			lines := strings.Split(string(content), "\n")
+			for lineNum, line := range lines {
+				if strings.Contains(line, "function") && strings.Contains(line, memberName) {
+					return &protocol.Location{
+						URI: "file://" + fullPath,
+						Range: protocol.Range{
+							Start: protocol.Position{Line: lineNum, Character: 0},
+							End:   protocol.Position{Line: lineNum, Character: len(line)},
+						},
 					}
 				}
 			}
