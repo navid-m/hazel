@@ -325,14 +325,27 @@ func (s *Server) handleHover(msg *jsonrpc.Message) error {
 
 		symbol = doc.FindSymbolByName(word)
 		if symbol == nil {
-			// Try to find in imported symbols first
-			symbol = s.findImportedSymbol(doc, word)
+			if currentClass := s.findCurrentClass(doc, params.Position); currentClass != nil {
+				for _, child := range currentClass.Children {
+					if child.Name == word && (child.Kind == protocol.SymbolKindFunction || child.Kind == protocol.SymbolKindVariable) {
+						symbol = child
+						break
+					}
+				}
+				if symbol == nil && currentClass.Type != "" {
+					symbol = s.findMemberInType(doc, currentClass.Type, word)
+				}
+			}
+
 			if symbol == nil {
-				symbol = s.findSymbolInProject(word)
+				symbol = s.findImportedSymbol(doc, word)
 				if symbol == nil {
-					symbol = s.stdlib.FindSymbol(word)
+					symbol = s.findSymbolInProject(word)
 					if symbol == nil {
-						return s.writer.WriteResponse(msg.ID, nil)
+						symbol = s.stdlib.FindSymbol(word)
+						if symbol == nil {
+							return s.writer.WriteResponse(msg.ID, nil)
+						}
 					}
 				}
 			}
@@ -711,7 +724,7 @@ func (s *Server) findMemberLocationInPath(typeName string, memberName string, ba
 			lines := strings.Split(string(content), "\n")
 			for lineNum, line := range lines {
 				if (strings.Contains(line, "function") && strings.Contains(line, memberName)) ||
-				   (strings.Contains(line, "var") && strings.Contains(line, memberName)) {
+					(strings.Contains(line, "var") && strings.Contains(line, memberName)) {
 					return &protocol.Location{
 						URI: "file://" + fullPath,
 						Range: protocol.Range{
