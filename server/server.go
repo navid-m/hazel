@@ -655,36 +655,37 @@ func (s *Server) handleDefinition(msg *jsonrpc.Message) error {
 	line := doc.GetLineContent(params.Position.Line)
 	log.Printf("[DEBUG] Definition line: %q, pos: %d", line, params.Position.Character)
 	if params.Position.Character > 0 && params.Position.Character <= len(line) {
-		prefix := line[:params.Position.Character]
-		log.Printf("[DEBUG] Definition prefix: %q", prefix)
-		dotIdx := strings.LastIndex(prefix, ".")
-		log.Printf("[DEBUG] Dot index: %d", dotIdx)
-		if dotIdx > 0 {
-			objName := ""
-			for i := dotIdx - 1; i >= 0; i-- {
-				if !parser.IsIdentifierChar(rune(prefix[i])) {
-					objName = prefix[i+1 : dotIdx]
-					break
-				}
-				if i == 0 {
-					objName = prefix[:dotIdx]
-				}
+		word := doc.GetWordAtPosition(params.Position)
+		if word != "" {
+			wordStart := params.Position.Character
+			for wordStart > 0 && parser.IsIdentifierChar(rune(line[wordStart-1])) {
+				wordStart--
 			}
 
-			memberName := doc.GetWordAtPosition(params.Position)
-			if objName != "" && memberName != "" {
-				objType := s.resolveVariableType(doc, objName)
-				log.Printf("[DEBUG] Goto definition: objName=%s, memberName=%s, objType=%s", objName, memberName, objType)
-				if objType != "" {
-					location := s.getTypeDefinitionLocation(objType, memberName)
-					if location != nil {
-						log.Printf("[DEBUG] Found member location: %s", location.URI)
-						return s.writer.WriteResponse(msg.ID, location)
-					}
-					log.Printf("[DEBUG] Member location not found for %s.%s", objType, memberName)
+			if wordStart > 0 && line[wordStart-1] == '.' {
+				objEnd := wordStart - 1
+				objStart := objEnd
+				for objStart > 0 && parser.IsIdentifierChar(rune(line[objStart-1])) {
+					objStart--
 				}
-				// If we're in member access context, don't fall through to old logic
-				return s.writer.WriteResponse(msg.ID, nil)
+
+				if objStart < objEnd {
+					objName := line[objStart:objEnd]
+					memberName := word
+
+					log.Printf(
+						"[DEBUG] Goto definition: objName=%s, memberName=%s",
+						objName, memberName,
+					)
+					objType := s.resolveVariableType(doc, objName)
+					if objType != "" {
+						location := s.getTypeDefinitionLocation(objType, memberName)
+						if location != nil {
+							return s.writer.WriteResponse(msg.ID, location)
+						}
+					}
+					return s.writer.WriteResponse(msg.ID, nil)
+				}
 			}
 		}
 	}
@@ -697,8 +698,12 @@ func (s *Server) handleDefinition(msg *jsonrpc.Message) error {
 		}
 
 		if currentClass := s.findCurrentClass(doc, params.Position); currentClass != nil {
+			log.Printf("[DEBUG] Found current class: %s with %d children",
+				currentClass.Name, len(currentClass.Children))
 			for _, child := range currentClass.Children {
-				if child.Name == word && (child.Kind == protocol.SymbolKindFunction || child.Kind == protocol.SymbolKindVariable) {
+				log.Printf("[DEBUG] Class child: %s (kind: %v)", child.Name, child.Kind)
+				if child.Name == word {
+					log.Printf("[DEBUG] Found matching symbol: %s", child.Name)
 					location := protocol.Location{
 						URI:   params.TextDocument.URI,
 						Range: child.Selection,
@@ -712,6 +717,9 @@ func (s *Server) handleDefinition(msg *jsonrpc.Message) error {
 					return s.writer.WriteResponse(msg.ID, location)
 				}
 			}
+		} else {
+			log.Printf("[DEBUG] No current class found for position %d:%d",
+				params.Position.Line, params.Position.Character)
 		}
 
 		symbol = doc.FindSymbolByName(word)
