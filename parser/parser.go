@@ -339,7 +339,7 @@ func (p *Parser) parseTypeDeclaration(startIdx int, kind string) *Symbol {
 
 	// Look for extends clause
 	parentType := ""
-	for i := startIdx + 2; i < len(p.tokens) && i < startIdx + 10; i++ {
+	for i := startIdx + 2; i < len(p.tokens) && i < startIdx+10; i++ {
 		if p.tokens[i].Value == "extends" && i+1 < len(p.tokens) {
 			parentType = p.tokens[i+1].Value
 			break
@@ -400,6 +400,8 @@ func (p *Parser) parseFunction(startIdx int) *Symbol {
 		return nil
 	}
 
+	documentation := p.findPrecedingComment(startIdx)
+
 	var params []Parameter
 	if startIdx+2 < len(p.tokens) && p.tokens[startIdx+2].Value == "(" {
 		params = p.parseParameters(startIdx + 2)
@@ -429,8 +431,9 @@ func (p *Parser) parseFunction(startIdx int) *Symbol {
 			Start: protocol.Position{Line: nameToken.Line, Character: nameToken.Col},
 			End:   protocol.Position{Line: nameToken.Line, Character: nameToken.Col + len(nameToken.Value)},
 		},
-		Type:       returnType,
-		Parameters: params,
+		Type:          returnType,
+		Parameters:    params,
+		Documentation: documentation,
 	}
 }
 
@@ -476,6 +479,9 @@ func (p *Parser) parseVariable(startIdx int) *Symbol {
 
 	varType := "Dynamic"
 
+	// Look for preceding comment/docstring
+	documentation := p.findPrecedingComment(startIdx)
+
 	// Look for explicit type annotation (var name:Type)
 	if startIdx+2 < len(p.tokens) && p.tokens[startIdx+2].Value == ":" {
 		if startIdx+3 < len(p.tokens) && p.tokens[startIdx+3].Type == TokenIdentifier {
@@ -504,7 +510,8 @@ func (p *Parser) parseVariable(startIdx int) *Symbol {
 			Start: protocol.Position{Line: nameToken.Line, Character: nameToken.Col},
 			End:   protocol.Position{Line: nameToken.Line, Character: nameToken.Col + len(nameToken.Value)},
 		},
-		Type: varType,
+		Type:          varType,
+		Documentation: documentation,
 	}
 }
 
@@ -538,6 +545,38 @@ func FindSymbolByName(symbols []*Symbol, name string) *Symbol {
 	return nil
 }
 
+// findPrecedingComment looks for a comment immediately before the given token index
+func (p *Parser) findPrecedingComment(tokenIdx int) string {
+	for i := tokenIdx - 1; i >= 0 && i >= tokenIdx-10; i-- {
+		token := p.tokens[i]
+		if token.Type == TokenComment {
+			comment := strings.TrimSpace(token.Value)
+
+			if strings.HasPrefix(comment, "/*") {
+				comment = strings.TrimPrefix(comment, "/*")
+				comment = strings.TrimSuffix(comment, "*/")
+				lines := strings.Split(comment, "\n")
+				var cleanLines []string
+				for _, line := range lines {
+					line = strings.TrimSpace(line)
+					line = strings.TrimPrefix(line, "*")
+					line = strings.TrimSpace(line)
+					if line != "" {
+						cleanLines = append(cleanLines, line)
+					}
+				}
+				result := strings.Join(cleanLines, " ")
+				return result
+			}
+
+			comment = strings.TrimPrefix(comment, "//")
+			comment = strings.TrimSpace(comment)
+			return comment
+		}
+	}
+	return ""
+}
+
 // parseImport parses an import statement
 func (p *Parser) parseImport(start int) *Import {
 	if start+1 >= len(p.tokens) {
@@ -545,9 +584,7 @@ func (p *Parser) parseImport(start int) *Import {
 	}
 
 	var path strings.Builder
-	i := start + 1 // Skip "import" keyword
-
-	// Build the import path
+	i := start + 1
 	for i < len(p.tokens) && p.tokens[i].Value != ";" {
 		if p.tokens[i].Type == TokenIdentifier || p.tokens[i].Value == "." {
 			path.WriteString(p.tokens[i].Value)
