@@ -18,6 +18,7 @@ import (
 
 	"github.com/navid-m/hazel/document"
 	"github.com/navid-m/hazel/jsonrpc"
+	"github.com/navid-m/hazel/lime"
 	"github.com/navid-m/hazel/parser"
 	"github.com/navid-m/hazel/protocol"
 	"github.com/navid-m/hazel/stdlib"
@@ -32,6 +33,8 @@ type Server struct {
 	debug              bool
 	shutdown           bool
 	pendingDiagnostics map[string]*time.Timer
+	limeProject        *lime.Project
+	projectRoot        string
 }
 
 // NewServer creates a new LSP server
@@ -132,6 +135,29 @@ func (s *Server) handleMessage(msg *jsonrpc.Message) error {
 
 // handleInitialize handles the initialize request
 func (s *Server) handleInitialize(msg *jsonrpc.Message) error {
+	var params map[string]interface{}
+	if err := json.Unmarshal(msg.Params, &params); err == nil {
+		if rootURI, ok := params["rootUri"].(string); ok {
+			s.projectRoot = strings.TrimPrefix(rootURI, "file://")
+			log.Printf("[DEBUG] Project root: %s", s.projectRoot)
+			if projectFile := lime.FindProjectFile(s.projectRoot); projectFile != "" {
+				log.Printf("[DEBUG] Found project file: %s", projectFile)
+				if proj, err := lime.ParseProject(projectFile); err == nil {
+					s.limeProject = proj
+					log.Printf("[DEBUG] Loaded Lime project with %d sources and %d haxelibs", len(proj.Sources), len(proj.Haxelibs))
+					for _, lib := range proj.Haxelibs {
+						libPath := lime.GetHaxelibPath(lib)
+						log.Printf("[DEBUG] Haxelib %s -> %s", lib, libPath)
+					}
+				} else {
+					log.Printf("[DEBUG] Failed to parse project: %v", err)
+				}
+			} else {
+				log.Printf("[DEBUG] No project.xml found in %s", s.projectRoot)
+			}
+		}
+	}
+
 	result := map[string]any{
 		"capabilities": map[string]any{
 			"textDocumentSync": map[string]any{
@@ -176,6 +202,23 @@ func (s *Server) handleDidOpen(msg *jsonrpc.Message) error {
 		params.TextDocument.Version,
 	); err != nil {
 		return err
+	}
+
+	if s.limeProject == nil {
+		filePath := strings.TrimPrefix(params.TextDocument.URI, "file://")
+		fileDir := filepath.Dir(filePath)
+		if projectFile := lime.FindProjectFile(fileDir); projectFile != "" {
+			log.Printf("[DEBUG] Found project file from opened document: %s", projectFile)
+			if proj, err := lime.ParseProject(projectFile); err == nil {
+				s.limeProject = proj
+				s.projectRoot = filepath.Dir(projectFile)
+				log.Printf("[DEBUG] Loaded Lime project with %d sources and %d haxelibs", len(proj.Sources), len(proj.Haxelibs))
+				for _, lib := range proj.Haxelibs {
+					libPath := lime.GetHaxelibPath(lib)
+					log.Printf("[DEBUG] Haxelib %s -> %s", lib, libPath)
+				}
+			}
+		}
 	}
 
 	time.AfterFunc(100*time.Millisecond, func() {
@@ -281,9 +324,12 @@ func (s *Server) handleHover(msg *jsonrpc.Message) error {
 
 		symbol = doc.FindSymbolByName(word)
 		if symbol == nil {
-			symbol = s.stdlib.FindSymbol(word)
+			symbol = s.findSymbolInProject(word)
 			if symbol == nil {
-				return s.writer.WriteResponse(msg.ID, nil)
+				symbol = s.stdlib.FindSymbol(word)
+				if symbol == nil {
+					return s.writer.WriteResponse(msg.ID, nil)
+				}
 			}
 		}
 	}
@@ -714,9 +760,22 @@ func (s *Server) runHaxeCompiler(uri string) []protocol.Diagnostic {
 	}
 	tempFile.Close()
 
-	cmd := exec.Command("haxe", "--no-output", filepath.Base(tempFilePath))
+	args := []string{"--no-output", filepath.Base(tempFilePath)}
+	
+	if s.limeProject != nil {
+		for _, src := range s.limeProject.Sources {
+			args = append(args, "-cp", src)
+		}
+		for _, lib := range s.limeProject.Haxelibs {
+			args = append(args, "-lib", lib)
+		}
+		log.Printf("[DEBUG] Haxe compiler args: %v", args)
+	}
+
+	cmd := exec.Command("haxe", args...)
 	cmd.Dir = tempDir
 	output, _ := cmd.CombinedOutput()
+	log.Printf("[DEBUG] Haxe compiler output: %s", string(output))
 
 	lines := strings.Split(string(output), "\n")
 	for _, line := range lines {
@@ -1028,6 +1087,38 @@ func (s *Server) getImportedSymbols(doc *document.Document) []string {
 			symbols = append(symbols, symbolName)
 		}
 	}
+
+	if s.limeProject != nil {
+		for _, libName := range s.limeProject.Haxelibs {
+			libPath := lime.GetHaxelibPath(libName)
+			if libPath != "" {
+				symbols = append(symbols, s.indexHaxelib(libPath)...)
+			}
+		}
+	}
+
+	return symbols
+}
+
+func (s *Server) indexHaxelib(path string) []string {
+	var symbols []string
+	filepath.Walk(path, func(p string, info os.FileInfo, err error) error {
+		if err != nil || info.IsDir() || !strings.HasSuffix(p, ".hx") {
+			return nil
+		}
+		content, err := os.ReadFile(p)
+		if err != nil {
+			return nil
+		}
+		parser := parser.NewParser(string(content))
+		syms, err := parser.Parse()
+		if err == nil {
+			for _, sym := range syms {
+				symbols = append(symbols, sym.Name)
+			}
+		}
+		return nil
+	})
 	return symbols
 }
 
@@ -1179,4 +1270,34 @@ func (s *Server) getKeywordInfo(keyword string) string {
 		return fmt.Sprintf("**%s**\n\n%s", keyword, doc)
 	}
 	return ""
+}
+
+func (s *Server) findSymbolInProject(name string) *parser.Symbol {
+	if s.limeProject == nil {
+		return nil
+	}
+
+	parts := strings.Split(name, ".")
+	if len(parts) < 2 {
+		return nil
+	}
+
+	for _, libName := range s.limeProject.Haxelibs {
+		libPath := lime.GetHaxelibPath(libName)
+		if libPath == "" {
+			continue
+		}
+
+		relPath := strings.Join(parts, string(filepath.Separator)) + ".hx"
+		fullPath := filepath.Join(libPath, relPath)
+
+		if content, err := os.ReadFile(fullPath); err == nil {
+			p := parser.NewParser(string(content))
+			if symbols, err := p.Parse(); err == nil && len(symbols) > 0 {
+				return symbols[0]
+			}
+		}
+	}
+
+	return nil
 }
