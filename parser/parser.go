@@ -48,6 +48,13 @@ type Symbol struct {
 	Documentation string
 }
 
+// Import represents an import statement
+type Import struct {
+	Path  string
+	Alias string
+	Range protocol.Range
+}
+
 // Parameter represents a function parameter
 type Parameter struct {
 	Name     string
@@ -61,6 +68,7 @@ type Parser struct {
 	lines   []string
 	tokens  []Token
 	pos     int
+	imports []Import
 }
 
 // NewParser creates a new Haxe parser
@@ -75,6 +83,11 @@ func NewParser(content string) *Parser {
 func (p *Parser) Parse() ([]*Symbol, error) {
 	p.tokenize()
 	return p.parseSymbols(), nil
+}
+
+// GetImports returns the parsed imports
+func (p *Parser) GetImports() []Import {
+	return p.imports
 }
 
 // tokenize breaks the content into tokens
@@ -261,9 +274,10 @@ func (p *Parser) parseSymbols() []*Symbol {
 			}
 
 		case "import", "using":
-			// Skip import/using statements
-			for i < len(p.tokens) && p.tokens[i].Value != ";" {
-				i++
+			// Parse import/using statements
+			importStmt := p.parseImport(i)
+			if importStmt != nil {
+				p.imports = append(p.imports, *importStmt)
 			}
 
 		case "class", "interface", "enum", "abstract", "typedef":
@@ -449,9 +463,21 @@ func (p *Parser) parseVariable(startIdx int) *Symbol {
 	}
 
 	varType := "Dynamic"
+	
+	// Look for explicit type annotation (var name:Type)
 	if startIdx+2 < len(p.tokens) && p.tokens[startIdx+2].Value == ":" {
 		if startIdx+3 < len(p.tokens) && p.tokens[startIdx+3].Type == TokenIdentifier {
 			varType = p.tokens[startIdx+3].Value
+		}
+	} else {
+		// Look for type inference from 'new' expression (var name = new Type())
+		for i := startIdx + 2; i < len(p.tokens) && i < startIdx + 10; i++ {
+			if p.tokens[i].Value == "=" && i+1 < len(p.tokens) && 
+			   p.tokens[i+1].Value == "new" && i+2 < len(p.tokens) &&
+			   p.tokens[i+2].Type == TokenIdentifier {
+				varType = p.tokens[i+2].Value
+				break
+			}
 		}
 	}
 
@@ -498,6 +524,36 @@ func FindSymbolByName(symbols []*Symbol, name string) *Symbol {
 		}
 	}
 	return nil
+}
+
+// parseImport parses an import statement
+func (p *Parser) parseImport(start int) *Import {
+	if start+1 >= len(p.tokens) {
+		return nil
+	}
+
+	var path strings.Builder
+	i := start + 1 // Skip "import" keyword
+	
+	// Build the import path
+	for i < len(p.tokens) && p.tokens[i].Value != ";" {
+		if p.tokens[i].Type == TokenIdentifier || p.tokens[i].Value == "." {
+			path.WriteString(p.tokens[i].Value)
+		}
+		i++
+	}
+
+	if path.Len() == 0 {
+		return nil
+	}
+
+	return &Import{
+		Path: path.String(),
+		Range: protocol.Range{
+			Start: protocol.Position{Line: p.tokens[start].Line, Character: p.tokens[start].Col},
+			End:   protocol.Position{Line: p.tokens[i-1].Line, Character: p.tokens[i-1].Col + len(p.tokens[i-1].Value)},
+		},
+	}
 }
 
 // GetWordAtPosition extracts the word at a given position

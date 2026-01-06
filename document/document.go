@@ -19,6 +19,7 @@ type Document struct {
 	Version int
 	Lines   []string
 	Symbols []*parser.Symbol
+	Imports []parser.Import
 }
 
 // Manager manages all open documents
@@ -52,6 +53,7 @@ func (m *Manager) Open(uri string, content string, version int) error {
 		return err
 	}
 	doc.Symbols = symbols
+	doc.Imports = p.GetImports()
 
 	m.documents[uri] = doc
 	return nil
@@ -92,6 +94,7 @@ func (m *Manager) Update(
 		symbols, err := p.Parse()
 		if err == nil {
 			doc.Symbols = symbols
+			doc.Imports = p.GetImports()
 		}
 	}()
 

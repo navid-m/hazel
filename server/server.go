@@ -18,6 +18,7 @@ import (
 
 	"github.com/navid-m/hazel/document"
 	"github.com/navid-m/hazel/jsonrpc"
+
 	"github.com/navid-m/hazel/lime"
 	"github.com/navid-m/hazel/parser"
 	"github.com/navid-m/hazel/protocol"
@@ -324,11 +325,15 @@ func (s *Server) handleHover(msg *jsonrpc.Message) error {
 
 		symbol = doc.FindSymbolByName(word)
 		if symbol == nil {
-			symbol = s.findSymbolInProject(word)
+			// Try to find in imported symbols first
+			symbol = s.findImportedSymbol(doc, word)
 			if symbol == nil {
-				symbol = s.stdlib.FindSymbol(word)
+				symbol = s.findSymbolInProject(word)
 				if symbol == nil {
-					return s.writer.WriteResponse(msg.ID, nil)
+					symbol = s.stdlib.FindSymbol(word)
+					if symbol == nil {
+						return s.writer.WriteResponse(msg.ID, nil)
+					}
 				}
 			}
 		}
@@ -538,6 +543,37 @@ func (s *Server) handleDefinition(msg *jsonrpc.Message) error {
 		return s.writer.WriteResponse(msg.ID, nil)
 	}
 
+	line := doc.GetLineContent(params.Position.Line)
+	if params.Position.Character > 0 && params.Position.Character <= len(line) {
+		prefix := line[:params.Position.Character]
+		dotIdx := strings.LastIndex(prefix, ".")
+		if dotIdx > 0 {
+			objName := ""
+			for i := dotIdx - 1; i >= 0; i-- {
+				if !parser.IsIdentifierChar(rune(prefix[i])) {
+					objName = prefix[i+1 : dotIdx]
+					break
+				}
+				if i == 0 {
+					objName = prefix[:dotIdx]
+				}
+			}
+
+			memberName := doc.GetWordAtPosition(params.Position)
+			if objName != "" && memberName != "" {
+				objType := s.resolveVariableType(doc, objName)
+				if objType != "" {
+					if memberSymbol := s.findMemberInType(doc, objType, memberName); memberSymbol != nil {
+						location := s.getSymbolLocation(objType + "." + memberName)
+						if location != nil {
+							return s.writer.WriteResponse(msg.ID, location)
+						}
+					}
+				}
+			}
+		}
+	}
+
 	symbol := doc.FindSymbolAtPosition(params.Position)
 	if symbol == nil {
 		word := doc.GetWordAtPosition(params.Position)
@@ -547,16 +583,19 @@ func (s *Server) handleDefinition(msg *jsonrpc.Message) error {
 
 		symbol = doc.FindSymbolByName(word)
 		if symbol == nil {
-			symbol = s.findSymbolInProject(word)
+			symbol = s.findImportedSymbol(doc, word)
 			if symbol == nil {
-				if filePath, stdSymbol := s.stdlib.FindSymbolLocation(word); stdSymbol != nil {
-					location := &protocol.Location{
-						URI:   "file://" + filePath,
-						Range: stdSymbol.Selection,
+				symbol = s.findSymbolInProject(word)
+				if symbol == nil {
+					if filePath, stdSymbol := s.stdlib.FindSymbolLocation(word); stdSymbol != nil {
+						location := &protocol.Location{
+							URI:   "file://" + filePath,
+							Range: stdSymbol.Selection,
+						}
+						return s.writer.WriteResponse(msg.ID, location)
 					}
-					return s.writer.WriteResponse(msg.ID, location)
+					return s.writer.WriteResponse(msg.ID, nil)
 				}
-				return s.writer.WriteResponse(msg.ID, nil)
 			}
 
 			location := s.getSymbolLocation(word)
@@ -1123,7 +1162,7 @@ func (s *Server) getCompletionItems(
 				}
 			}
 			if typeName != "" {
-				return s.getMemberCompletions(typeName)
+				return s.getMemberCompletions(doc, typeName)
 			}
 		}
 	}
@@ -1173,8 +1212,13 @@ func (s *Server) getCompletionItems(
 }
 
 // getMemberCompletions returns completions for members of a type
-func (s *Server) getMemberCompletions(typeName string) []protocol.CompletionItem {
+func (s *Server) getMemberCompletions(doc *document.Document, typeName string) []protocol.CompletionItem {
 	var items []protocol.CompletionItem
+
+	actualTypeName := s.resolveVariableType(doc, typeName)
+	if actualTypeName != "" {
+		typeName = actualTypeName
+	}
 
 	symbols := s.stdlib.GetAllSymbols(typeName)
 	for _, sym := range symbols {
@@ -1184,7 +1228,64 @@ func (s *Server) getMemberCompletions(typeName string) []protocol.CompletionItem
 		}
 	}
 
+	if projectSymbol := s.findSymbolInProject(typeName); projectSymbol != nil {
+		for _, child := range projectSymbol.Children {
+			items = append(items, s.symbolToCompletionItem(child))
+		}
+	}
+
+	if importedSymbol := s.findImportedSymbol(doc, typeName); importedSymbol != nil {
+		for _, child := range importedSymbol.Children {
+			items = append(items, s.symbolToCompletionItem(child))
+		}
+	}
+
 	return items
+}
+
+// resolveVariableType tries to find the actual type of a variable
+func (s *Server) resolveVariableType(doc *document.Document, varName string) string {
+	for _, sym := range doc.Symbols {
+		if sym.Name == varName && sym.Kind == protocol.SymbolKindVariable {
+			return sym.Type
+		}
+		for _, child := range sym.Children {
+			if child.Name == varName && child.Kind == protocol.SymbolKindVariable {
+				return child.Type
+			}
+		}
+	}
+	return ""
+}
+
+// findMemberInType finds a member (method/field) in a given type
+func (s *Server) findMemberInType(doc *document.Document, typeName string, memberName string) *parser.Symbol {
+	if importedSymbol := s.findImportedSymbol(doc, typeName); importedSymbol != nil {
+		for _, child := range importedSymbol.Children {
+			if child.Name == memberName {
+				return child
+			}
+		}
+	}
+
+	if projectSymbol := s.findSymbolInProject(typeName); projectSymbol != nil {
+		for _, child := range projectSymbol.Children {
+			if child.Name == memberName {
+				return child
+			}
+		}
+	}
+
+	symbols := s.stdlib.GetAllSymbols(typeName)
+	for _, sym := range symbols {
+		for _, child := range sym.Children {
+			if child.Name == memberName {
+				return child
+			}
+		}
+	}
+
+	return nil
 }
 
 // isInsideComment checks if position is inside a comment
@@ -1233,19 +1334,28 @@ func (s *Server) isInsideComment(doc *document.Document, pos protocol.Position) 
 // getImportedSymbols extracts imported symbols from document
 func (s *Server) getImportedSymbols(doc *document.Document) []string {
 	var symbols []string
-	importRe := regexp.MustCompile(`import\s+([\w.]+)`)
+	seen := make(map[string]bool)
 
-	for _, line := range doc.Lines {
-		matches := importRe.FindStringSubmatch(line)
-		if len(matches) > 1 {
-			importPath := matches[1]
-			parts := strings.Split(importPath, ".")
-			symbolName := parts[len(parts)-1]
+	for _, imp := range doc.Imports {
+		parts := strings.Split(imp.Path, ".")
+		symbolName := parts[len(parts)-1]
+
+		if !seen[symbolName] {
 			symbols = append(symbols, symbolName)
+			seen[symbolName] = true
+		}
 
-			if s.limeProject != nil {
-				if resolvedSymbol := s.findSymbolInProject(importPath); resolvedSymbol != nil {
+		if s.limeProject != nil {
+			if resolvedSymbol := s.findSymbolInProject(imp.Path); resolvedSymbol != nil {
+				if !seen[resolvedSymbol.Name] {
 					symbols = append(symbols, resolvedSymbol.Name)
+					seen[resolvedSymbol.Name] = true
+				}
+				for _, child := range resolvedSymbol.Children {
+					if !seen[child.Name] {
+						symbols = append(symbols, child.Name)
+						seen[child.Name] = true
+					}
 				}
 			}
 		}
@@ -1255,7 +1365,13 @@ func (s *Server) getImportedSymbols(doc *document.Document) []string {
 		for _, libName := range s.limeProject.Haxelibs {
 			libPath := lime.GetHaxelibPath(libName)
 			if libPath != "" {
-				symbols = append(symbols, s.indexHaxelib(libPath)...)
+				libSymbols := s.indexHaxelib(libPath)
+				for _, sym := range libSymbols {
+					if !seen[sym] {
+						symbols = append(symbols, sym)
+						seen[sym] = true
+					}
+				}
 			}
 		}
 	}
@@ -1466,6 +1582,27 @@ func (s *Server) findSymbolInProject(name string) *parser.Symbol {
 		}
 	}
 
+	return nil
+}
+
+// findImportedSymbol finds a symbol in the imported modules of a document
+func (s *Server) findImportedSymbol(doc *document.Document, symbolName string) *parser.Symbol {
+	for _, imp := range doc.Imports {
+		if resolvedSymbol := s.findSymbolInProject(imp.Path); resolvedSymbol != nil {
+			if resolvedSymbol.Name == symbolName {
+				return resolvedSymbol
+			}
+			for _, child := range resolvedSymbol.Children {
+				if child.Name == symbolName {
+					return child
+				}
+			}
+		}
+		parts := strings.Split(imp.Path, ".")
+		if len(parts) > 0 && parts[len(parts)-1] == symbolName {
+			return s.findSymbolInProject(imp.Path)
+		}
+	}
 	return nil
 }
 
