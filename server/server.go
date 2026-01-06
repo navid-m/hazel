@@ -1142,7 +1142,11 @@ func (s *Server) runHaxeCompiler(uri string) []protocol.Diagnostic {
 	args := []string{"--no-output"}
 
 	if s.limeProject != nil {
-		log.Printf("[DEBUG] Lime project found with %d sources and %d haxelibs", len(s.limeProject.Sources), len(s.limeProject.Haxelibs))
+		log.Printf(
+			"[DEBUG] Lime project found with %d sources and %d haxelibs",
+			len(s.limeProject.Sources),
+			len(s.limeProject.Haxelibs),
+		)
 		for _, src := range s.limeProject.Sources {
 			args = append(args, "-cp", src)
 			log.Printf("[DEBUG] Added source path: %s", src)
