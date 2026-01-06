@@ -58,7 +58,11 @@ func (m *Manager) Open(uri string, content string, version int) error {
 }
 
 // Update updates an existing document
-func (m *Manager) Update(uri string, changes []protocol.TextDocumentContentChangeEvent, version int) error {
+func (m *Manager) Update(
+	uri string,
+	changes []protocol.TextDocumentContentChangeEvent,
+	version int,
+) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
