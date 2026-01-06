@@ -142,7 +142,11 @@ func (s *Server) handleDidOpen(msg *jsonrpc.Message) error {
 		return err
 	}
 
-	if err := s.docMgr.Open(params.TextDocument.URI, params.TextDocument.Text, params.TextDocument.Version); err != nil {
+	if err := s.docMgr.Open(
+		params.TextDocument.URI,
+		params.TextDocument.Text,
+		params.TextDocument.Version,
+	); err != nil {
 		return err
 	}
 
@@ -155,7 +159,9 @@ func (s *Server) handleDidChange(msg *jsonrpc.Message) error {
 	if err := json.Unmarshal(msg.Params, &params); err != nil {
 		return err
 	}
-	if err := s.docMgr.Update(params.TextDocument.URI, params.ContentChanges, params.TextDocument.Version); err != nil {
+	if err := s.docMgr.Update(
+		params.TextDocument.URI, params.ContentChanges, params.TextDocument.Version,
+	); err != nil {
 		return err
 	}
 	return s.publishDiagnostics(params.TextDocument.URI)
@@ -474,7 +480,9 @@ func (s *Server) handleWorkspaceSymbol(msg *jsonrpc.Message) error {
 	docs := s.docMgr.GetAll()
 	for _, doc := range docs {
 		for _, sym := range doc.Symbols {
-			if params.Query == "" || strings.Contains(strings.ToLower(sym.Name), strings.ToLower(params.Query)) {
+			if params.Query == "" || strings.Contains(
+				strings.ToLower(sym.Name), strings.ToLower(params.Query),
+			) {
 				results = append(results, protocol.SymbolInformation{
 					Name: sym.Name,
 					Kind: sym.Kind,
@@ -485,7 +493,9 @@ func (s *Server) handleWorkspaceSymbol(msg *jsonrpc.Message) error {
 				})
 			}
 			for _, child := range sym.Children {
-				if params.Query == "" || strings.Contains(strings.ToLower(child.Name), strings.ToLower(params.Query)) {
+				if params.Query == "" || strings.Contains(
+					strings.ToLower(child.Name), strings.ToLower(params.Query),
+				) {
 					results = append(results, protocol.SymbolInformation{
 						Name: child.Name,
 						Kind: child.Kind,
@@ -597,7 +607,10 @@ func (s *Server) analyzeDiagnostics(doc *document.Document) []protocol.Diagnosti
 }
 
 // getCompletionItems returns completion items for a position
-func (s *Server) getCompletionItems(doc *document.Document, pos protocol.Position) []protocol.CompletionItem {
+func (s *Server) getCompletionItems(
+	doc *document.Document,
+	pos protocol.Position,
+) []protocol.CompletionItem {
 	var items []protocol.CompletionItem
 
 	keywords := []string{
