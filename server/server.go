@@ -897,6 +897,10 @@ func (s *Server) getCompletionItems(
 		}
 	}
 
+	if s.isInsideComment(doc, pos) {
+		return []protocol.CompletionItem{}
+	}
+
 	keywords := []string{
 		"abstract", "break", "case", "cast", "catch", "class", "continue", "default",
 		"do", "dynamic", "else", "enum", "extends", "extern", "false", "final", "for",
@@ -929,25 +933,67 @@ func (s *Server) getCompletionItems(
 		})
 	}
 
-	stdlibItems := s.stdlib.GetCompletionItems("")
-	for _, name := range stdlibItems {
-		found := false
-		for _, item := range items {
-			if item.Label == name {
-				found = true
-				break
-			}
-		}
-		if !found {
-			items = append(items, protocol.CompletionItem{
-				Label:  name,
-				Kind:   protocol.CompletionItemKindClass,
-				Detail: "Standard library",
-			})
-		}
+	importedSymbols := s.getImportedSymbols(doc)
+	for _, name := range importedSymbols {
+		items = append(items, protocol.CompletionItem{
+			Label:  name,
+			Kind:   protocol.CompletionItemKindClass,
+			Detail: "Imported",
+		})
 	}
 
 	return items
+}
+
+// isInsideComment checks if position is inside a comment
+func (s *Server) isInsideComment(doc *document.Document, pos protocol.Position) bool {
+	line := doc.GetLineContent(pos.Line)
+	if pos.Character > len(line) {
+		return false
+	}
+	prefix := line[:pos.Character]
+	
+	if strings.Contains(prefix, "//") {
+		return true
+	}
+	
+	inMultiline := false
+	for i := 0; i <= pos.Line; i++ {
+		l := doc.GetLineContent(i)
+		if i < pos.Line {
+			if strings.Contains(l, "/*") && !strings.Contains(l, "*/") {
+				inMultiline = true
+			}
+			if strings.Contains(l, "*/") {
+				inMultiline = false
+			}
+		} else {
+			beforePos := l[:pos.Character]
+			if strings.Contains(beforePos, "/*") {
+				inMultiline = true
+			}
+			if strings.Contains(beforePos, "*/") {
+				inMultiline = false
+			}
+		}
+	}
+	return inMultiline
+}
+
+// getImportedSymbols extracts imported symbols from document
+func (s *Server) getImportedSymbols(doc *document.Document) []string {
+	var symbols []string
+	importRe := regexp.MustCompile(`import\s+([\w.]+)`)
+	
+	for _, line := range doc.Lines {
+		matches := importRe.FindStringSubmatch(line)
+		if len(matches) > 1 {
+			parts := strings.Split(matches[1], ".")
+			symbolName := parts[len(parts)-1]
+			symbols = append(symbols, symbolName)
+		}
+	}
+	return symbols
 }
 
 // getDocstringCompletion generates docstring completion based on function signature
