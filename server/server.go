@@ -589,7 +589,7 @@ func (s *Server) handleDefinition(msg *jsonrpc.Message) error {
 
 		if currentClass := s.findCurrentClass(doc, params.Position); currentClass != nil {
 			for _, child := range currentClass.Children {
-				if child.Name == word && child.Kind == protocol.SymbolKindFunction {
+				if child.Name == word && (child.Kind == protocol.SymbolKindFunction || child.Kind == protocol.SymbolKindVariable) {
 					location := protocol.Location{
 						URI:   params.TextDocument.URI,
 						Range: child.Selection,
@@ -710,7 +710,8 @@ func (s *Server) findMemberLocationInPath(typeName string, memberName string, ba
 		if content, err := os.ReadFile(fullPath); err == nil {
 			lines := strings.Split(string(content), "\n")
 			for lineNum, line := range lines {
-				if strings.Contains(line, "function") && strings.Contains(line, memberName) {
+				if (strings.Contains(line, "function") && strings.Contains(line, memberName)) ||
+				   (strings.Contains(line, "var") && strings.Contains(line, memberName)) {
 					return &protocol.Location{
 						URI: "file://" + fullPath,
 						Range: protocol.Range{
