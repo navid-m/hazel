@@ -183,6 +183,11 @@ func (d *Document) FindSymbolAtPosition(pos protocol.Position) *parser.Symbol {
 	return parser.FindSymbolAtPosition(d.Symbols, pos)
 }
 
+// FindSymbolByName finds a symbol by its name
+func (d *Document) FindSymbolByName(name string) *parser.Symbol {
+	return parser.FindSymbolByName(d.Symbols, name)
+}
+
 // GetWordAtPosition gets the word at the given position
 func (d *Document) GetWordAtPosition(pos protocol.Position) string {
 	return parser.GetWordAtPosition(d.Content, pos)

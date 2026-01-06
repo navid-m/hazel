@@ -215,7 +215,10 @@ func (s *Server) handleHover(msg *jsonrpc.Message) error {
 			return s.writer.WriteResponse(msg.ID, hover)
 		}
 
-		return s.writer.WriteResponse(msg.ID, nil)
+		symbol = doc.FindSymbolByName(word)
+		if symbol == nil {
+			return s.writer.WriteResponse(msg.ID, nil)
+		}
 	}
 
 	var content strings.Builder
@@ -550,11 +553,14 @@ func (s *Server) handleRename(msg *jsonrpc.Message) error {
 // publishDiagnostics sends diagnostics for a document
 func (s *Server) publishDiagnostics(uri string) error {
 	doc, exists := s.docMgr.Get(uri)
-	if !exists {
-		return nil
+
+	var diagnostics []protocol.Diagnostic
+	if exists {
+		diagnostics = s.analyzeDiagnostics(doc)
+	} else {
+		diagnostics = []protocol.Diagnostic{}
 	}
 
-	diagnostics := s.analyzeDiagnostics(doc)
 	params := protocol.PublishDiagnosticsParams{
 		URI:         uri,
 		Diagnostics: diagnostics,

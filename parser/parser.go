@@ -480,6 +480,21 @@ func FindSymbolAtPosition(symbols []*Symbol, pos protocol.Position) *Symbol {
 	return nil
 }
 
+// FindSymbolByName finds a symbol by its name
+func FindSymbolByName(symbols []*Symbol, name string) *Symbol {
+	for _, sym := range symbols {
+		if sym.Name == name {
+			return sym
+		}
+		if len(sym.Children) > 0 {
+			if child := FindSymbolByName(sym.Children, name); child != nil {
+				return child
+			}
+		}
+	}
+	return nil
+}
+
 // GetWordAtPosition extracts the word at a given position
 func GetWordAtPosition(content string, pos protocol.Position) string {
 	lines := strings.Split(content, "\n")
