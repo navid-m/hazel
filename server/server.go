@@ -395,7 +395,8 @@ func (s *Server) handleHover(msg *jsonrpc.Message) error {
 
 	if symbol.Documentation != "" {
 		content.WriteString("\n\n")
-		content.WriteString(symbol.Documentation)
+		formattedDoc, _ := s.parseDocumentation(symbol.Documentation)
+		content.WriteString(formattedDoc)
 	}
 
 	hover := protocol.Hover{
@@ -407,6 +408,72 @@ func (s *Server) handleHover(msg *jsonrpc.Message) error {
 	}
 
 	return s.writer.WriteResponse(msg.ID, hover)
+}
+
+// DocParam represents a parsed @param tag
+type DocParam struct {
+	Name        string
+	Description string
+}
+
+// parseDocumentation separates main documentation from @param tags
+func (s *Server) parseDocumentation(doc string) (string, []DocParam) {
+	var mainDoc []string
+	var params []DocParam
+	var returnDoc string
+
+	words := strings.Fields(doc)
+
+	i := 0
+	for i < len(words) {
+		word := words[i]
+
+		if word == "@param" && i+1 < len(words) {
+			paramName := words[i+1]
+			var paramDesc []string
+			i += 2
+
+			for i < len(words) && !strings.HasPrefix(words[i], "@") {
+				paramDesc = append(paramDesc, words[i])
+				i++
+			}
+
+			params = append(params, DocParam{
+				Name:        paramName,
+				Description: strings.Join(paramDesc, " "),
+			})
+			continue
+		} else if word == "@return" {
+			var retDesc []string
+			i++
+
+			for i < len(words) && !strings.HasPrefix(words[i], "@") {
+				retDesc = append(retDesc, words[i])
+				i++
+			}
+
+			returnDoc = strings.Join(retDesc, " ")
+			continue
+		} else if !strings.HasPrefix(word, "@") {
+			mainDoc = append(mainDoc, word)
+		}
+		i++
+	}
+
+	result := strings.Join(mainDoc, " ")
+
+	if len(params) > 0 {
+		result += "\n\n**Parameters:**\n"
+		for _, param := range params {
+			result += "- `" + param.Name + "` - " + param.Description + "\n"
+		}
+	}
+
+	if returnDoc != "" {
+		result += "\n\n**Returns:** " + returnDoc
+	}
+
+	return result, params
 }
 
 // handleCompletion handles textDocument/completion
