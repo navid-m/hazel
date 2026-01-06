@@ -599,18 +599,23 @@ func (s *Server) findSymbolInPath(name string, parts []string, basePath string) 
 	if len(parts) >= 2 {
 		relPath := strings.Join(parts, string(filepath.Separator)) + ".hx"
 		fullPath := filepath.Join(basePath, relPath)
-		if _, err := os.Stat(fullPath); err == nil {
-			return &protocol.Location{
-				URI: "file://" + fullPath,
-				Range: protocol.Range{
-					Start: protocol.Position{Line: 0, Character: 0},
-					End:   protocol.Position{Line: 0, Character: 0},
-				},
+		if content, err := os.ReadFile(fullPath); err == nil {
+			p := parser.NewParser(string(content))
+			if symbols, err := p.Parse(); err == nil {
+				targetName := parts[len(parts)-1]
+				for _, sym := range symbols {
+					if sym.Name == targetName {
+						return &protocol.Location{
+							URI:   "file://" + fullPath,
+							Range: sym.Selection,
+						}
+					}
+				}
 			}
 		}
 	}
 
-	var foundPath string
+	var foundLocation *protocol.Location
 	filepath.Walk(basePath, func(p string, info os.FileInfo, err error) error {
 		if err != nil || info.IsDir() || !strings.HasSuffix(p, ".hx") {
 			return nil
@@ -639,7 +644,10 @@ func (s *Server) findSymbolInPath(name string, parts []string, basePath string) 
 			targetName := parts[len(parts)-1]
 			for _, sym := range syms {
 				if sym.Name == targetName {
-					foundPath = p
+					foundLocation = &protocol.Location{
+						URI:   "file://" + p,
+						Range: sym.Selection,
+					}
 					return filepath.SkipAll
 				}
 			}
@@ -647,17 +655,7 @@ func (s *Server) findSymbolInPath(name string, parts []string, basePath string) 
 		return nil
 	})
 
-	if foundPath != "" {
-		return &protocol.Location{
-			URI: "file://" + foundPath,
-			Range: protocol.Range{
-				Start: protocol.Position{Line: 0, Character: 0},
-				End:   protocol.Position{Line: 0, Character: 0},
-			},
-		}
-	}
-
-	return nil
+	return foundLocation
 }
 
 // handleReferences handles textDocument/references
