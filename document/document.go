@@ -134,7 +134,10 @@ func (d *Document) GetLineContent(line int) string {
 }
 
 // applyChange applies an incremental change to the document content
-func applyChange(content string, change protocol.TextDocumentContentChangeEvent) string {
+func applyChange(
+	content string,
+	change protocol.TextDocumentContentChangeEvent,
+) string {
 	if change.Range == nil {
 		return change.Text
 	}
