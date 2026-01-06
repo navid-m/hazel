@@ -93,7 +93,6 @@ func (r *Reader) ReadMessage() (*Message, error) {
 		return nil, fmt.Errorf("invalid Content-Length: %v", err)
 	}
 
-	// Read content
 	content := make([]byte, contentLength)
 	if _, err := io.ReadFull(r.reader, content); err != nil {
 		return nil, err
@@ -103,7 +102,6 @@ func (r *Reader) ReadMessage() (*Message, error) {
 		log.Printf("Received: %s", string(content))
 	}
 
-	// Parse JSON
 	var msg Message
 	if err := json.Unmarshal(content, &msg); err != nil {
 		return nil, err
@@ -112,18 +110,18 @@ func (r *Reader) ReadMessage() (*Message, error) {
 	return &msg, nil
 }
 
-// Writer writes JSON-RPC messages
+// Writes JSON-RPC messages
 type Writer struct {
 	writer io.Writer
 	debug  bool
 }
 
-// NewWriter creates a new JSON-RPC writer
+// Creates a new JSON-RPC writer
 func NewWriter(w io.Writer, debug bool) *Writer {
 	return &Writer{writer: w, debug: debug}
 }
 
-// WriteMessage writes a JSON-RPC message
+// Writes a JSON-RPC message
 func (w *Writer) WriteMessage(msg *Message) error {
 	msg.JSONRPC = "2.0"
 
@@ -148,7 +146,7 @@ func (w *Writer) WriteMessage(msg *Message) error {
 	return nil
 }
 
-// WriteResponse writes a response message
+// Writes a response message
 func (w *Writer) WriteResponse(id json.RawMessage, result interface{}) error {
 	resultJSON, err := json.Marshal(result)
 	if err != nil {
