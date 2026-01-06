@@ -132,8 +132,8 @@ func GetHaxelibPath(name string) string {
 
 	possiblePaths := []string{
 		filepath.Join(versionPath, "src"),
-		filepath.Join(versionPath, name), // Some libs have their source in a subdirectory named after the lib
-		versionPath,                      // Some libs have source directly in version directory
+		filepath.Join(versionPath, name),
+		versionPath,
 	}
 
 	for _, path := range possiblePaths {
