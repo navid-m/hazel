@@ -116,16 +116,13 @@ func (p *Parser) tokenize() {
 			continue
 		}
 
-		// Skip whitespace
 		if unicode.IsSpace(rune(ch)) {
 			col++
 			continue
 		}
 
-		// Comments
 		if ch == '/' && i+1 < len(p.content) {
 			if p.content[i+1] == '/' {
-				// Single-line comment
 				start := i
 				for i < len(p.content) && p.content[i] != '\n' {
 					i++
@@ -140,7 +137,6 @@ func (p *Parser) tokenize() {
 				col = 0
 				continue
 			} else if p.content[i+1] == '*' {
-				// Multi-line comment
 				start := i
 				i += 2
 				for i+1 < len(p.content) && !(p.content[i] == '*' && p.content[i+1] == '/') {
@@ -164,7 +160,6 @@ func (p *Parser) tokenize() {
 			}
 		}
 
-		// String literals
 		if ch == '"' || ch == '\'' {
 			quote := ch
 			start := i
@@ -222,7 +217,8 @@ func (p *Parser) tokenize() {
 		if unicode.IsLetter(rune(ch)) || ch == '_' {
 			start := i
 			startCol := col
-			for i < len(p.content) && (unicode.IsLetter(rune(p.content[i])) || unicode.IsDigit(rune(p.content[i])) || p.content[i] == '_') {
+			for i < len(p.content) &&
+				(unicode.IsLetter(rune(p.content[i])) || unicode.IsDigit(rune(p.content[i])) || p.content[i] == '_') {
 				i++
 				col++
 			}
