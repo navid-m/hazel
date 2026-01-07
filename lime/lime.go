@@ -86,12 +86,24 @@ func GetHaxelibPath(name string) string {
 		return ""
 	}
 
-	haxelibPaths := []string{
+	haxelibFile := filepath.Join(homeDir, ".haxelib")
+	var haxelibPaths []string
+
+	if data, err := os.ReadFile(haxelibFile); err == nil {
+		libPath := strings.TrimSpace(string(data))
+		libPath = strings.TrimRight(libPath, "/\\")
+		if libPath != "" {
+			libPath = filepath.FromSlash(libPath)
+			haxelibPaths = append(haxelibPaths, filepath.Join(libPath, name))
+		}
+	}
+
+	haxelibPaths = append(haxelibPaths,
 		filepath.Join(homeDir, "haxelib", name),
 		filepath.Join(homeDir, ".haxelib", name),
 		filepath.Join("/usr/local/lib/haxe/lib", name),
 		filepath.Join("/usr/lib/haxe/lib", name),
-	}
+	)
 
 	var haxelibPath string
 	for _, path := range haxelibPaths {

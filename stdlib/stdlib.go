@@ -50,6 +50,20 @@ func (s *StdLib) findStdLibPath() string {
 		return ""
 	}
 
+	haxelibFile := filepath.Join(homeDir, ".haxelib")
+	if data, err := os.ReadFile(haxelibFile); err == nil {
+		libPath := strings.TrimSpace(string(data))
+		libPath = strings.TrimRight(libPath, "/\\")
+		if libPath != "" {
+			libPath = filepath.FromSlash(libPath)
+			parentDir := filepath.Dir(libPath)
+			stdPath := filepath.Join(parentDir, "std")
+			if _, err := os.Stat(stdPath); err == nil {
+				return stdPath
+			}
+		}
+	}
+
 	haxeVersionsDir := filepath.Join(homeDir, "haxe", "versions")
 	if _, err := os.Stat(haxeVersionsDir); err == nil {
 		entries, err := os.ReadDir(haxeVersionsDir)
