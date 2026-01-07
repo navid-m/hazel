@@ -139,7 +139,10 @@ func GetHaxelibPath(name string) string {
 	)
 
 	if data, err := os.ReadFile(devPath); err == nil {
-		return strings.TrimSpace(string(data))
+		devLibPath := strings.TrimSpace(string(data))
+		devLibPath = strings.TrimRight(devLibPath, "\r\n")
+		devLibPath = filepath.FromSlash(devLibPath)
+		return devLibPath
 	}
 
 	possiblePaths := []string{

@@ -12,6 +12,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"runtime"
 	"strconv"
 	"strings"
 	"time"
@@ -54,6 +55,20 @@ func NewServer(debug bool) *Server {
 		debug:              debug,
 		pendingDiagnostics: make(map[string]*time.Timer),
 	}
+}
+
+// uriToPath converts a file:// URI to a local file path
+func uriToPath(uri string) string {
+	path := strings.TrimPrefix(uri, "file://")
+
+	if runtime.GOOS == "windows" {
+		if len(path) >= 3 && path[0] == '/' && path[2] == ':' {
+			path = path[1:]
+		}
+		path = filepath.FromSlash(path)
+	}
+
+	return path
 }
 
 // Run starts the server main loop
@@ -138,7 +153,7 @@ func (s *Server) handleInitialize(msg *jsonrpc.Message) error {
 	var params map[string]any
 	if err := json.Unmarshal(msg.Params, &params); err == nil {
 		if rootURI, ok := params["rootUri"].(string); ok {
-			s.projectRoot = strings.TrimPrefix(rootURI, "file://")
+			s.projectRoot = uriToPath(rootURI)
 			log.Printf("[DEBUG] Project root: %s", s.projectRoot)
 			if projectFile := lime.FindProjectFile(s.projectRoot); projectFile != "" {
 				log.Printf("[DEBUG] Found project file: %s", projectFile)
@@ -205,7 +220,7 @@ func (s *Server) handleDidOpen(msg *jsonrpc.Message) error {
 	}
 
 	if s.limeProject == nil {
-		filePath := strings.TrimPrefix(params.TextDocument.URI, "file://")
+		filePath := uriToPath(params.TextDocument.URI)
 		fileDir := filepath.Dir(filePath)
 		if projectFile := lime.FindProjectFile(fileDir); projectFile != "" {
 			log.Printf("[DEBUG] Found project file from opened document: %s", projectFile)
@@ -653,7 +668,9 @@ func (s *Server) handleDefinition(msg *jsonrpc.Message) error {
 	}
 
 	currentLine := doc.GetLineContent(params.Position.Line)
-	if strings.TrimSpace(currentLine) != "" && strings.HasPrefix(strings.TrimSpace(currentLine), "import") {
+	trimmedLine := strings.TrimSpace(currentLine)
+
+	if trimmedLine != "" && strings.HasPrefix(trimmedLine, "import") {
 		importMatch := regexp.MustCompile(`import\s+([\w.]+)`).FindStringSubmatch(currentLine)
 		if len(importMatch) > 1 {
 			importPath := importMatch[1]
@@ -662,6 +679,7 @@ func (s *Server) handleDefinition(msg *jsonrpc.Message) error {
 				return s.writer.WriteResponse(msg.ID, location)
 			}
 		}
+		return s.writer.WriteResponse(msg.ID, nil)
 	}
 
 	line := doc.GetLineContent(params.Position.Line)
@@ -769,13 +787,17 @@ func (s *Server) handleDefinition(msg *jsonrpc.Message) error {
 
 func (s *Server) getSymbolLocation(name string) *protocol.Location {
 	if s.limeProject == nil {
+		log.Printf("[DEBUG] getSymbolLocation: No lime project found")
 		return nil
 	}
 
 	parts := strings.Split(name, ".")
+	log.Printf("[DEBUG] getSymbolLocation: name=%s, parts=%v", name, parts)
 
 	for _, srcPath := range s.limeProject.Sources {
+		log.Printf("[DEBUG] Searching in source path: %s", srcPath)
 		if location := s.findSymbolInPath(name, parts, srcPath); location != nil {
+			log.Printf("[DEBUG] Found in source path: %s", srcPath)
 			return location
 		}
 	}
@@ -783,14 +805,18 @@ func (s *Server) getSymbolLocation(name string) *protocol.Location {
 	for _, libName := range s.limeProject.Haxelibs {
 		libPath := lime.GetHaxelibPath(libName)
 		if libPath == "" {
+			log.Printf("[DEBUG] Could not resolve haxelib: %s", libName)
 			continue
 		}
 
+		log.Printf("[DEBUG] Searching in haxelib %s at path: %s", libName, libPath)
 		if location := s.findSymbolInPath(name, parts, libPath); location != nil {
+			log.Printf("[DEBUG] Found in haxelib %s at path: %s", libName, libPath)
 			return location
 		}
 	}
 
+	log.Printf("[DEBUG] Symbol not found in any path: %s", name)
 	return nil
 }
 
@@ -1093,10 +1119,7 @@ func (s *Server) runHaxeCompiler(uri string) []protocol.Diagnostic {
 	log.Printf("[DEBUG] runHaxeCompiler called for URI: %s", uri)
 	diagnostics := make([]protocol.Diagnostic, 0)
 
-	filePath := strings.TrimPrefix(uri, "file://")
-	if len(filePath) > 0 && filePath[0] != '/' {
-		filePath = "/" + filePath
-	}
+	filePath := uriToPath(uri)
 	log.Printf("[DEBUG] File path: %s", filePath)
 
 	doc, exists := s.docMgr.Get(uri)
